@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: CC0-1.0 -->
+<component type="desktop-application">
+  <id>@SOFA_APP_ID@</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>Sofa</name>
+  <summary>Browse the web on your TV with a remote</summary>
+  <description>
+    <p>
+      Sofa is a web browser for the TV, made for KDE Plasma Bigscreen and driven from the couch with a TV remote,
+      a game pad or a keyboard. It is private by default: pages get no camera, microphone, location or
+      notifications.
+    </p>
+    <p>This is an early version: it opens addresses and searches, and goes back with the remote.</p>
+  </description>
+  <url type="homepage">@SOFA_HOMEPAGE@</url>
+  <url type="bugtracker">@SOFA_HOMEPAGE@/issues</url>
+  <url type="vcs-browser">@SOFA_HOMEPAGE@</url>
+  <launchable type="desktop-id">@SOFA_APP_ID@.desktop</launchable>
+  <provides>
+    <binary>@SOFA_BINARY@</binary>
+  </provides>
+  <categories>
+    <category>Network</category>
+    <category>WebBrowser</category>
+  </categories>
+  <supports>
+    <control>tv-remote</control>
+    <control>gamepad</control>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+  <content_rating type="oars-1.1"/>
+</component>

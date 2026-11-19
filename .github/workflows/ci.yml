@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Every way in is built on every push, so none of them rots: lint, Nix, the direct build on four distributions
+# (the same ./sofa.sh steps a user runs), and the Flatpak on x86_64 and aarch64.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - name: Format, Clippy, Shellcheck
+        run: |
+          nix develop --command cargo fmt --all --check
+          nix develop --command cargo clippy --workspace --all-targets --locked -- -D warnings
+          nix develop --command shellcheck sofa.sh
+
+  nix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - name: nix build (runs the tests and checks the .desktop and AppStream files)
+        run: nix build -L
+      - run: nix flake check -L
+
+  distro:
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - archlinux:latest
+          - registry.fedoraproject.org/fedora:43
+          - debian:trixie
+          - opensuse/tumbleweed
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    steps:
+      - name: Tools the steps below need
+        run: |
+          . /etc/os-release
+          case "$ID" in
+            arch) pacman -Syu --noconfirm --needed git sudo ;;
+            fedora) dnf install -y git sudo util-linux ;;
+            debian) apt-get update && apt-get install -y git sudo ca-certificates ;;
+            opensuse*) zypper --non-interactive install git sudo tar gzip shadow util-linux ;;
+          esac
+      - uses: actions/checkout@v5
+      - name: ./sofa.sh deps --install --yes
+        run: ./sofa.sh deps --install --yes
+      - name: Build, check, install and uninstall as a normal user
+        run: |
+          useradd -m tester
+          chown -R tester .
+          su tester -c './sofa.sh build'
+          su tester -c 'cd build && ctest --output-on-failure'
+          su tester -c 'QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu ./sofa.sh check' | tee check.txt
+          su tester -c './sofa.sh install && ./sofa.sh uninstall && test -z "$(find ~/.local -type f ! -name mimeinfo.cache)"'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: check-${{ strategy.job-index }}
+          path: check.txt
+
+  flatpak:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v5
+      - name: Manifest with the app ID, and the crate list from Cargo.lock
+        run: |
+          app_id="$(tr -d '[:space:]' < APP_ID)"
+          mkdir -p build/flatpak
+          sed "s/@APP_ID@/$app_id/g" packaging/flatpak/manifest.yml > "build/flatpak/$app_id.yml"
+          git clone --depth 1 https://github.com/flatpak/flatpak-builder-tools.git /tmp/fbt
+          pip install --break-system-packages aiohttp PyYAML tomlkit || pip install aiohttp PyYAML tomlkit
+          python3 /tmp/fbt/cargo/flatpak-cargo-generator.py Cargo.lock -o build/flatpak/cargo-sources.json
+          echo "APP_ID=$app_id" >> "$GITHUB_ENV"
+      - uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
+        with:
+          bundle: sofa-${{ matrix.arch }}.flatpak
+          manifest-path: build/flatpak/${{ env.APP_ID }}.yml
+          arch: ${{ matrix.arch }}
+          cache-key: flatpak-builder-${{ matrix.arch }}-${{ hashFiles('Cargo.lock', 'packaging/flatpak/manifest.yml') }}

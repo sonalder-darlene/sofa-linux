@@ -1,0 +1,10 @@
+# Private pointer for agents; never committed.
+CLAUDE.local.md
+/build/
+/target/
+/result*
+/.flatpak-builder/
+/flatpak-build/
+/flatpak-repo/
+# Written by the CXX-Qt build for the QML language server.
+.qmlls.ini

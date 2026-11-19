@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# The Flatpak of Sofa for Linux. `./sofa.sh flatpak` builds it with the app ID filled in; Flathub's copy will come
+# from this file. Rules (see README, "Flatpak"): no access to the home folder or the host, the engine's sandbox
+# stays on, every permission says why it is here.
+id: '@APP_ID@'
+runtime: org.kde.Platform
+runtime-version: '6.10'
+sdk: org.kde.Sdk
+# QtWebEngine comes from the shared BaseApp, kept up to date by Flathub, not from a copy of our own.
+base: io.qt.qtwebengine.BaseApp
+base-version: '6.10'
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  # lld: CXX-Qt links with it (GNU ld gets the order of its static libraries wrong).
+  - org.freedesktop.Sdk.Extension.llvm20
+command: sofa-tv-browser
+finish-args:
+  - --share=ipc
+  # Wayland first; X11 only where there is no Wayland.
+  - --socket=wayland
+  - --socket=fallback-x11
+  # Sound of videos and pages (PipeWire's PulseAudio service).
+  - --socket=pulseaudio
+  - --share=network
+  # The GPU: drawing pages and decoding video.
+  - --device=dri
+  # Downloads go where people look for them; any other file goes through the file chooser portal.
+  - --filesystem=xdg-download
+  - --env=QTWEBENGINEPROCESS_PATH=/app/bin/QtWebEngineProcess
+  # Not here on purpose: --filesystem=home or host, --talk-name=org.freedesktop.Flatpak, --device=all,
+  # QTWEBENGINE_DISABLE_SANDBOX.
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm20/bin
+  env:
+    CARGO_HOME: /run/build/sofa/cargo
+cleanup-commands:
+  - /app/cleanup-BaseApp.sh
+modules:
+  - name: sofa
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DSOFA_CARGO_OFFLINE=ON
+      - -DBUILD_TESTING=OFF
+    sources:
+      # The source tree this manifest sits in (packaging/flatpak/ or build/flatpak/). Flathub's copy points at a
+      # release tag instead.
+      - type: dir
+        path: ../..
+        skip:
+          - build
+          - target
+          - result
+      # Every crate in Cargo.lock, so the build needs no network. Made from Cargo.lock by flatpak-cargo-generator
+      # (see README, "Flatpak").
+      - cargo-sources.json

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Sofa
+GenericName=TV Web Browser
+Comment=Browse the web on your TV with a remote
+Exec=@SOFA_BINARY@ %u
+Icon=@SOFA_APP_ID@
+Terminal=false
+StartupNotify=true
+Categories=Network;WebBrowser;
+MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+Keywords=web;browser;internet;tv;television;remote;bigscreen;
