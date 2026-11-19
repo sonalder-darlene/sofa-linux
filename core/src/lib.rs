@@ -6,4 +6,11 @@
 #![warn(missing_docs)]
 
 pub mod address;
+pub mod bookmark_file;
+pub mod folders;
+pub mod library;
 pub mod requests;
+pub mod settings;
+pub mod sites;
+pub mod start;
+pub mod tabs;

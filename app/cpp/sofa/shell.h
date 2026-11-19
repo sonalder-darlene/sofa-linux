@@ -17,9 +17,11 @@ struct RequestPolicy; // Rust type, see src/shell.rs
 // Sets up QtWebEngine; must run before the application object exists.
 void initWebEngine();
 
-// Creates the persistent web profile named `storageName`, routes every request through `policy`, and hands the
-// profile and the start options to the QML root object as its initial properties.
-void prepareEngine(QQmlApplicationEngine &engine, const QString &storageName, rust::Box<RequestPolicy> policy,
+// Creates the persistent web profile named `storageName`, routes every request through `policy` (in that profile and
+// in private ones), and hands the profile, the Host helper and the start options to the QML root object as its
+// initial properties. Returns false when another Sofa already runs and took the start address (this one then
+// quits).
+bool prepareEngine(QQmlApplicationEngine &engine, const QString &storageName, rust::Box<RequestPolicy> policy,
                    const QString &startUrl, bool fullScreen);
 
 // Whether loading the QML gave a root object (a window).

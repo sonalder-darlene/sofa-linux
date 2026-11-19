@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// The browser window: an address bar over one page. Everything works with the arrows, OK and Back.
+// The browser window. It holds the tabs (each a page of its own, loaded only while it is in sight or seen lately),
+// the start page, Sofa's screens (search, bookmarks, history, settings) and the menu over a page.
+//
 // Keys, as Plasma Bigscreen's remote support sends them (a TV remote through CEC, a game pad):
-//   Back (remote Back, game pad B / Escape, Alt+Left)  leave full screen video, hide the bar, or go back
-//   Menu (game pad X), Home, Ctrl+L, F6                  show the address bar
-//   F5, Ctrl+R                                           reload
-//   F11                                                  window or full screen
+//   on a page: arrows and OK drive the pointer; Back or Menu opens Sofa's menu; Home opens the start page;
+//              Page Up / Page Down (Channel up / down) scroll a screen
+//   on Sofa's screens: arrows move the focus, OK picks, OK held or Menu lists actions, Back goes back
+//   F11 switches between a window and full screen.
+//
+// A page out of sight (another tab, or the start page over it) is frozen: its scripts and media stop, so it can
+// neither be heard nor open anything behind Sofa's screens. Tabs out of sight past the few kept loaded (by the
+// computer's memory) and any out of sight for ten minutes are unloaded; their address and back list stay.
 
 import QtQuick
 import QtQuick.Controls as QQC2
@@ -18,61 +24,499 @@ Kirigami.AbstractApplicationWindow {
     id: root
 
     required property WebEngineProfile profile
+    required property QtObject host
     required property string startUrl
     required property bool startFullScreen
+    // Whether the window was a window (not full screen) when a page last asked for full screen.
+    property bool windowedBeforePage: false
 
-    // A page has been opened (the start screen is gone).
-    readonly property bool hasPage: view.url.toString() !== ""
-    // The address bar is in front of the page.
-    property bool barShown: true
+    // "start", "page", "search", "bookmarks", "history", "settings" or "setup".
+    property string screen: "start"
+    // Where Back goes from a screen: the screens it was opened from.
+    property var screenTrail: []
+    property bool menuShown: false
+    property bool pointerOn: true
 
-    title: view.title !== "" ? view.title : "Sofa"
+    // Tabs: one side for normal browsing, one for private browsing (as on Android, never side by side).
+    property bool privateMode: false
+    property QtObject privateProfile: null
+    // id → {id, url, title, view (a WebEngineView or null while unloaded), private}
+    property var tabs: ({})
+    property int nextTabId: 1
+    property int currentId: -1
+    // Bumped whenever a tab changes, so bindings that read `tabs` follow.
+    property int revision: 0
+    readonly property TabOrder order: privateMode ? privateOrder : normalOrder
+    readonly property var currentTab: (revision, tabs[currentId] || null)
+    // Each reads `revision`: `currentTab` stays the same object while its fields change.
+    readonly property string currentUrl: (revision, currentTab ? currentTab.url : "")
+    readonly property var currentView: (revision, currentTab ? currentTab.view : null)
+    // How many pages out of sight stay loaded on this computer.
+    readonly property int liveKeep: Session.liveBackground()
+    property double lastBackOnStart: 0
+
+    readonly property bool dialogOpen: linkMenu.visible || tabMenu.visible || tileDialog.visible || tileMenu.visible
+
+    title: (revision, currentTab && currentTab.title !== "" && screen === "page" ? currentTab.title + " — Sofa" : "Sofa")
     width: Kirigami.Units.gridUnit * 64
     height: Kirigami.Units.gridUnit * 36
     color: Kirigami.Theme.backgroundColor
 
-    function open(text) {
-        const url = Core.resolveAddress(text);
-        if (url === "") {
-            return;
-        }
-        view.url = url;
-        showPage();
+    TabOrder {
+        id: normalOrder
+    }
+    TabOrder {
+        id: privateOrder
     }
 
-    function showBar() {
-        barShown = true;
-        address.forceActiveFocus();
-        address.selectAll();
+    // The remote's keys go to the pointer while a page is in front with nothing over it.
+    Binding {
+        target: root.host
+        property: "remoteKeys"
+        value: root.screen === "page" && !root.menuShown && !root.dialogOpen && root.pointerOn
+               && root.currentView !== null && !root.currentView.isFullScreen
+    }
+
+    Connections {
+        target: root.host
+        // Another launch (a link from another app, the launcher) handed over an address, or asked for the window.
+        function onOpenRequested(text) {
+            root.raise();
+            root.requestActivate();
+            if (text === "") {
+                return;
+            }
+            const url = text.toLowerCase().startsWith("file:") ? text : Session.resolveAddress(text);
+            if (url === "") {
+                return;
+            }
+            // In a tab of its own, unless the tab in sight is empty or no tab fits, as on Android.
+            if (root.currentUrl !== "" && !root.order.isFull()) {
+                root.openInNewTab(url);
+            } else {
+                root.openInCurrent(url);
+            }
+        }
+        function onRemoteKey(key, pressed) {
+            if (key === Qt.Key_Back || key === Qt.Key_Escape) {
+                if (pressed) root.pageBack();
+            } else if (key === Qt.Key_Menu) {
+                if (pressed) root.openMenu();
+            } else if (key === Qt.Key_HomePage) {
+                if (pressed) root.goHome();
+            } else {
+                pointer.key(key, pressed);
+            }
+        }
+    }
+
+    // --- Tabs ------------------------------------------------------------------------------------------------------
+
+    // Adds a tab for `url` ("" for an empty one) after `after` (-1: at the end); its id, or -1 when the side is full.
+    function addTab(url, after) {
+        const id = nextTabId;
+        if (!order.add(id, after)) {
+            return -1;
+        }
+        nextTabId++;
+        // `quiet`: the tab's first load is Sofa's own (a tab brought back at start), not a visit the user made.
+        tabs[id] = { id: id, url: url, title: "", view: null, private: privateMode, quiet: false };
+        revision++;
+        return id;
+    }
+
+    function tabAddresses() {
+        return JSON.parse(order.order()).map(id => tabs[id]);
+    }
+
+    // The page of `tab`, made the first time it is needed.
+    function viewOf(tab) {
+        if (!tab.view) {
+            tab.view = pageComponent.createObject(pageLayer, {
+                tabId: tab.id,
+                profile: tab.private ? root.privateProfile : root.profile
+            });
+            if (tab.url !== "") {
+                tab.view.quietLoad = tab.quiet;
+                tab.view.url = tab.url;
+            }
+            tab.quiet = false;
+            revision++;
+        }
+        return tab.view;
+    }
+
+    function selectTab(id) {
+        if (!tabs[id]) {
+            return;
+        }
+        order.select(id);
+        currentId = id;
+        revision++;
+        trimTabs();
+        scheduleSave();
+    }
+
+    // Brings the tab in sight onto the screen: its page if it has one, else the start page.
+    function showCurrent() {
+        if (currentTab && currentTab.url !== "") {
+            showPage();
+        } else {
+            showStart();
+        }
     }
 
     function showPage() {
-        if (!hasPage) {
+        if (!currentTab || currentTab.url === "") {
+            showStart();
             return;
         }
-        barShown = false;
+        const view = viewOf(currentTab);
+        screenTrail = [];
+        menuShown = false;
+        screen = "page";
+        view.wake();
         view.forceActiveFocus();
+        scheduleSave();
     }
 
-    function back() {
-        if (view.isFullScreen) {
-            view.fullScreenCancelled();
-        } else if (barShown && hasPage) {
-            showPage();
-        } else if (view.canGoBack) {
-            view.goBack();
-        } else if (hasPage) {
-            showBar();
+    function showStart() {
+        menuShown = false;
+        screenTrail = [];
+        screen = "start";
+        startPage.privateMode = privateMode;
+        startPage.refresh();
+        startPage.focusFirst();
+        scheduleSave();
+    }
+
+    // Opens `url` in the tab in sight (the start page's cards, a search, a bookmark).
+    function openInCurrent(url) {
+        if (url === "") {
+            return;
         }
+        if (!currentTab) {
+            const id = addTab("", -1);
+            selectTab(id);
+        }
+        const tab = currentTab;
+        tab.url = url;
+        tab.title = "";
+        tab.quiet = false;
+        const view = viewOf(tab);
+        view.url = url;
+        revision++;
+        showPage();
     }
 
-    function toggleWindowFullScreen() {
-        if (root.visibility === Window.FullScreen) {
-            root.showNormal();
+    function openInNewTab(url) {
+        const id = addTab(url, currentId);
+        if (id < 0) {
+            notify(qsTr("Up to 10 tabs: close one to open another"));
+            return;
+        }
+        selectTab(id);
+        showPage();
+    }
+
+    function newTab() {
+        const id = addTab("", currentId);
+        if (id < 0) {
+            notify(qsTr("Up to 10 tabs: close one to open another"));
+            return;
+        }
+        selectTab(id);
+        showStart();
+    }
+
+    function closeTabs(ids) {
+        let next = -1;
+        for (const id of ids) {
+            const tab = tabs[id];
+            if (!tab) {
+                continue;
+            }
+            if (tab.view) {
+                tab.view.destroy();
+            }
+            delete tabs[id];
+            next = order.remove(id);
+        }
+        if (next < 0) {
+            next = addTab("", -1);
+        }
+        currentId = -1;
+        selectTab(next);
+        showCurrent();
+    }
+
+    function askCloseTabs(id) {
+        const ids = JSON.parse(order.order());
+        const options = [{ text: qsTr("Close tab"), value: "this" }];
+        if (ids.length > 1) {
+            options.push({ text: qsTr("Close other tabs"), value: "others" });
+            options.push({ text: qsTr("Close all tabs"), value: "all" });
+        }
+        const tab = tabs[id];
+        tabMenu.ask(tab && tab.title !== "" ? tab.title : qsTr("Tab"), "", options, value => {
+            if (value === "this") {
+                closeTabs([id]);
+            } else if (value === "others") {
+                closeTabs(ids.filter(t => t !== id));
+            } else {
+                closeTabs(ids);
+            }
+        });
+    }
+
+    // Unloads the pages out of sight that the rules say go (past the few most recent, or out of sight ten minutes).
+    function trimTabs() {
+        const live = JSON.parse(order.order()).filter(id => id !== currentId && tabs[id] && tabs[id].view
+                                                      && tabs[id].view.lifecycleState !== WebEngineView.LifecycleState.Discarded);
+        for (const id of JSON.parse(order.toUnload(liveKeep, JSON.stringify(live)))) {
+            const view = tabs[id].view;
+            if (!view.visible) {
+                view.lifecycleState = WebEngineView.LifecycleState.Discarded;
+            }
+        }
+        const still = live.filter(id => tabs[id].view.lifecycleState !== WebEngineView.LifecycleState.Discarded);
+        const wait = order.nextRest(JSON.stringify(still));
+        if (wait >= 0) {
+            restTimer.interval = wait + 1000;
+            restTimer.restart();
         } else {
-            root.showFullScreen();
+            restTimer.stop();
         }
     }
+
+    Timer {
+        id: restTimer
+        onTriggered: root.trimTabs()
+    }
+
+    // --- Private browsing -----------------------------------------------------------------------------------------
+
+    function togglePrivate() {
+        if (privateMode) {
+            leavePrivate();
+        } else {
+            enterPrivate();
+        }
+    }
+
+    function enterPrivate() {
+        privateProfile = host.newPrivateProfile();
+        // The normal tabs are unloaded while private browsing is on; they come back with their history after.
+        for (const id of JSON.parse(normalOrder.order())) {
+            const view = tabs[id].view;
+            if (view) {
+                view.lifecycleState = WebEngineView.LifecycleState.Discarded;
+            }
+        }
+        privateMode = true;
+        const id = addTab("", -1);
+        currentId = -1;
+        selectTab(id);
+        showStart();
+        notify(qsTr("Private browsing is on"));
+    }
+
+    function leavePrivate() {
+        for (const id of JSON.parse(privateOrder.order())) {
+            const tab = tabs[id];
+            if (tab && tab.view) {
+                tab.view.destroy();
+            }
+            delete tabs[id];
+            privateOrder.remove(id);
+        }
+        // The profile goes once its pages are gone: with it go the session's cookies, storage and cache.
+        endProfile.profile = privateProfile;
+        endProfile.restart();
+        privateProfile = null;
+        privateMode = false;
+        currentId = -1;
+        const back = normalOrder.current();
+        selectTab(back >= 0 ? back : addTab("", -1));
+        showStart();
+        notify(qsTr("Private browsing is off: its cookies and site data are erased"));
+    }
+
+    Timer {
+        id: endProfile
+        property QtObject profile: null
+        interval: 500
+        onTriggered: {
+            root.host.endPrivateProfile(profile);
+            profile = null;
+        }
+    }
+
+    // --- Screens and keys -----------------------------------------------------------------------------------------
+
+    function openScreen(name) {
+        if (screen !== name) {
+            screenTrail.push(screen);
+        }
+        menuShown = false;
+        screen = name;
+        scheduleSave();
+    }
+
+    function screenBack() {
+        const previous = screenTrail.pop();
+        if (previous === "page") {
+            showPage();
+        } else if (previous === undefined || previous === "start") {
+            showStart();
+        } else {
+            screen = previous;
+            focusScreen();
+        }
+    }
+
+    function focusScreen() {
+        if (screen === "bookmarks") bookmarksScreen.load(bookmarksScreen.folderId, -1);
+        else if (screen === "history") historyScreen.start();
+        else if (screen === "settings") settingsScreen.start("");
+        else if (screen === "start") startPage.focusFirst();
+    }
+
+    function goHome() {
+        showStart();
+    }
+
+    function openMenu() {
+        if (screen !== "page") {
+            return;
+        }
+        pointer.reset();
+        menu.bookmarked = Library.isBookmarked(currentUrl);
+        menuShown = true;
+        menu.show();
+    }
+
+    function closeMenu() {
+        menuShown = false;
+        if (currentView) {
+            currentView.forceActiveFocus();
+        }
+    }
+
+    // Back on a page: leave full screen, then scroll mode, else Sofa's menu.
+    function pageBack() {
+        if (currentView && currentView.isFullScreen) {
+            currentView.fullScreenCancelled();
+        } else if (pointer.scrollMode) {
+            pointer.setScrollMode(false);
+        } else {
+            openMenu();
+        }
+    }
+
+    // Back on the start page: the page behind it; else close an empty tab next to others (a New tab nobody used);
+    // else press Back again within a moment to leave Sofa.
+    function backOnStart() {
+        if (currentTab && currentTab.url !== "") {
+            showPage();
+        } else if (order.count() > 1) {
+            closeTabs([currentId]);
+        } else {
+            const now = Date.now();
+            if (now - lastBackOnStart < 2500) {
+                quit();
+            } else {
+                notify(qsTr("Press Back again to leave Sofa"));
+            }
+            lastBackOnStart = now;
+        }
+    }
+
+    function menuAction(name) {
+        const view = currentView;
+        switch (name) {
+        case "home": goHome(); break;
+        case "back": if (view && view.canGoBack) { view.goBack(); closeMenu(); } break;
+        case "forward": if (view && view.canGoForward) { view.goForward(); closeMenu(); } break;
+        case "reload": if (view) { view.reload(); closeMenu(); } break;
+        case "address":
+            openScreen("search");
+            searchScreen.start(currentUrl);
+            break;
+        case "newTab": newTab(); break;
+        case "bookmark":
+            if (Session.isWebUrl(currentUrl)) {
+                menu.bookmarked = Library.toggleBookmark(currentTab.title, currentUrl);
+                notify(menu.bookmarked ? qsTr("Bookmarked") : qsTr("Bookmark removed"));
+            }
+            break;
+        case "pin":
+            if (Session.isWebUrl(currentUrl)) {
+                Library.addTile(currentTab.title, currentUrl);
+                notify(qsTr("Added to the start page"));
+            }
+            break;
+        case "bookmarks":
+            openScreen("bookmarks");
+            bookmarksScreen.start(0);
+            break;
+        case "history":
+            openScreen("history");
+            historyScreen.start();
+            break;
+        case "pointer":
+            pointerOn = !pointerOn;
+            notify(pointerOn ? qsTr("Pointer on: the arrows move it") : qsTr("Pointer off: the arrows go to the page"));
+            break;
+        case "zoomOut": if (view) view.zoomFactor = Math.max(0.25, Math.round((view.zoomFactor - 0.1) * 10) / 10); break;
+        case "zoomIn": if (view) view.zoomFactor = Math.min(5, Math.round((view.zoomFactor + 0.1) * 10) / 10); break;
+        case "zoomReset": if (view) view.zoomFactor = 1; break;
+        case "settings": openSettings(); break;
+        }
+    }
+
+    function openSettings() {
+        settingsScreen.openPage = !privateMode && Session.isWebUrl(currentUrl) ? currentUrl : "";
+        openScreen("settings");
+        settingsScreen.start("");
+    }
+
+    function notify(text) {
+        showPassiveNotification(text);
+    }
+
+    function quit() {
+        saveNow();
+        Qt.quit();
+    }
+
+    // --- Saving the session ---------------------------------------------------------------------------------------
+
+    function scheduleSave() {
+        saveTimer.restart();
+    }
+
+    function saveNow() {
+        saveTimer.stop();
+        const ids = JSON.parse(normalOrder.order());
+        const current = normalOrder.current();
+        Session.saveTabs(JSON.stringify(ids.map(id => tabs[id] ? tabs[id].url : "")), Math.max(0, ids.indexOf(current)));
+        const inSight = (screen === "page") && !privateMode ? currentUrl : "";
+        Session.rememberLeftOff(inSight, privateMode);
+    }
+
+    Timer {
+        id: saveTimer
+        interval: 1000
+        onTriggered: root.saveNow()
+    }
+
+    onClosing: saveNow()
+
+    // --- Start ----------------------------------------------------------------------------------------------------
+
+    // What to show once the first-start question is answered.
+    property var afterSetup: null
 
     Component.onCompleted: {
         if (startFullScreen) {
@@ -80,134 +524,447 @@ Kirigami.AbstractApplicationWindow {
         } else {
             root.show();
         }
+        const saved = JSON.parse(Session.savedTabs());
+        let inSight = -1;
+        saved.addresses.forEach((url, i) => {
+            const id = addTab(url, -1);
+            tabs[id].quiet = true;
+            if (i === saved.current) {
+                inSight = id;
+            }
+        });
+        if (inSight < 0) {
+            inSight = addTab("", -1);
+        }
+        selectTab(inSight);
+
+        let show = showStart;
         if (startUrl !== "") {
-            view.url = startUrl;
-            showPage();
+            // An address from the command line (another app) opens in a tab of its own, unless the tab in sight is
+            // empty or no tab fits.
+            if (currentUrl !== "" && !order.isFull()) {
+                selectTab(addTab("", currentId));
+            }
+            currentTab.url = startUrl;
+            currentTab.quiet = false;
+            show = showPage;
         } else {
-            showBar();
+            const address = Session.startAddress();
+            const choice = Session.value("open_at_start");
+            if (choice === "last" && address !== "" && currentUrl !== "") {
+                show = showPage;
+            } else if (choice === "page" && address !== "") {
+                // A tab already on that site is reused, so restarts don't pile up tabs.
+                const same = JSON.parse(order.order()).find(id => Session.sameSite(tabs[id].url, address));
+                if (same !== undefined) {
+                    selectTab(same);
+                } else {
+                    if (currentUrl !== "" && !order.isFull()) {
+                        selectTab(addTab("", currentId));
+                    }
+                    currentTab.url = address;
+                    currentTab.quiet = true;
+                }
+                show = showPage;
+            }
+        }
+        if (Session.value("search_engine") === "") {
+            afterSetup = show;
+            screen = "setup";
+            setupScreen.start();
+        } else {
+            show();
         }
     }
 
-    Shortcut {
-        sequences: ["Back", "Esc", "Alt+Left", StandardKey.Back]
-        onActivated: root.back()
-    }
-    Shortcut {
-        sequences: ["Menu", "HomePage", "Ctrl+L", "F6"]
-        onActivated: root.showBar()
-    }
-    Shortcut {
-        sequences: [StandardKey.Refresh, "Ctrl+R"]
-        enabled: root.hasPage
-        onActivated: view.reload()
-    }
     Shortcut {
         sequence: "F11"
-        onActivated: root.toggleWindowFullScreen()
+        onActivated: root.visibility === Window.FullScreen ? root.showNormal() : root.showFullScreen()
+    }
+    Shortcut {
+        sequences: ["HomePage", "Alt+Home"]
+        onActivated: root.goHome()
+    }
+    // With the pointer off (or a mouse in use), the page has the keys; these still reach Sofa.
+    Shortcut {
+        sequences: ["Back", "Esc"]
+        enabled: root.screen === "page" && !root.menuShown && !root.host.remoteKeys
+        onActivated: root.pageBack()
+    }
+    Shortcut {
+        sequences: ["Menu", "Ctrl+L", "F6"]
+        enabled: root.screen === "page" && !root.menuShown && !root.host.remoteKeys
+        onActivated: root.openMenu()
+    }
+    Shortcut {
+        sequences: [StandardKey.Refresh]
+        enabled: root.screen === "page" && root.currentView !== null
+        onActivated: root.currentView.reload()
     }
 
-    ColumnLayout {
+    // --- What is on screen ----------------------------------------------------------------------------------------
+
+    Item {
+        id: pageLayer
         anchors.fill: parent
-        spacing: 0
+        visible: root.screen === "page"
 
-        QQC2.ToolBar {
-            id: bar
-            Layout.fillWidth: true
-            visible: root.barShown && !view.isFullScreen
-
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.largeSpacing
-
-                Kirigami.Icon {
-                    source: "go-home"
-                    implicitWidth: Kirigami.Units.iconSizes.medium
-                    implicitHeight: implicitWidth
-                    visible: !root.hasPage
-                }
-
-                QQC2.TextField {
-                    id: address
-                    Layout.fillWidth: true
-                    font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.4
-                    placeholderText: qsTr("Type a web address or search")
-                    inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
-                    selectByMouse: true
-                    Accessible.name: qsTr("Address")
-                    // Shows the short form while it isn't being edited.
-                    text: activeFocus ? view.url.toString() : Core.displayAddress(view.url.toString())
-                    onAccepted: root.open(text)
-                    Keys.onDownPressed: root.showPage()
+        Pointer {
+            id: pointer
+            anchors.fill: parent
+            z: 10
+            target: root.currentView
+            host: root.host
+            visible: root.pointerOn
+            onHold: (x, y) => {
+                if (root.currentView) {
+                    root.host.mouse(root.currentView, 3, x, y);
                 }
             }
         }
 
-        // How far the page has loaded.
-        QQC2.ProgressBar {
-            Layout.fillWidth: true
-            Layout.preferredHeight: Kirigami.Units.smallSpacing
-            visible: view.loading && !view.isFullScreen
-            from: 0
-            to: 100
-            value: view.loadProgress
+        // The menu's dim veil over the page.
+        Rectangle {
+            anchors.fill: parent
+            z: 11
+            color: "black"
+            opacity: root.menuShown ? 0.35 : 0
+            visible: opacity > 0
+            Behavior on opacity {
+                NumberAnimation { duration: Kirigami.Units.shortDuration }
+            }
         }
 
-        Item {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
+        BrowseMenu {
+            id: menu
+            anchors.fill: parent
+            z: 12
+            visible: root.menuShown
+            focus: root.menuShown
+            address: root.currentUrl
+            privateMode: root.privateMode
+            canGoBack: root.currentView ? root.currentView.canGoBack : false
+            canGoForward: root.currentView ? root.currentView.canGoForward : false
+            pointerOn: root.pointerOn
+            zoom: root.currentView ? root.currentView.zoomFactor : 1
+            tabs: {
+                root.revision;
+                const ids = JSON.parse(root.order.order());
+                const list = ids.map(id => root.tabs[id]).filter(t => t);
+                const names = JSON.parse(Session.tabNames(JSON.stringify(list.map(t => t.title)),
+                                                          JSON.stringify(list.map(t => t.url)), qsTr("New tab")));
+                return list.map((t, i) => ({ id: t.id, name: names[i] || qsTr("New tab"), current: t.id === root.currentId }));
+            }
+            onAction: name => root.menuAction(name)
+            onTabChosen: id => {
+                root.selectTab(id);
+                root.showCurrent();
+            }
+            onTabHeld: id => root.askCloseTabs(id)
+            onCloseRequested: root.closeMenu()
+        }
+    }
 
-            WebEngineView {
-                id: view
-                anchors.fill: parent
-                visible: root.hasPage
-                profile: root.profile
-                activeFocusOnPress: true
+    Component {
+        id: pageComponent
 
-                // Private by default: pages get no camera, microphone, location, screen or notifications.
-                onPermissionRequested: permission => permission.deny()
+        WebEngineView {
+            id: view
 
-                // A new window only for a link the user chose, and in this view; pop-ups pages open on their own
-                // are dropped. (The full pop-up rules come with ad blocking.)
-                onNewWindowRequested: request => {
-                    if (request.userInitiated) {
-                        view.url = request.requestedUrl;
+            property int tabId: -1
+            // The page process ended while out of sight: reload when shown.
+            property bool stopped: false
+            // History counts the visits the user made: the next load is Sofa's own (a tab brought back at start, an
+            // unloaded tab shown again, a reload after a crash) and doesn't count.
+            property bool quietLoad: false
+            // Whether the load under way counts as a visit; a reload doesn't.
+            property bool countsAsVisit: true
+            readonly property var tab: (root.revision, root.tabs[tabId] || null)
+
+            // Running again; an unloaded page loads anew, which isn't a visit.
+            function wake() {
+                if (lifecycleState === WebEngineView.LifecycleState.Discarded) {
+                    quietLoad = true;
+                }
+                if (lifecycleState !== WebEngineView.LifecycleState.Active) {
+                    lifecycleState = WebEngineView.LifecycleState.Active;
+                }
+            }
+
+            function reloadQuietly() {
+                quietLoad = true;
+                reload();
+            }
+
+            anchors.fill: parent
+            visible: root.screen === "page" && root.currentId === tabId
+            activeFocusOnPress: true
+            settings.focusOnNavigationEnabled: false
+
+            // Out of sight: frozen, so it can't play, run or open anything; in sight: running again.
+            onVisibleChanged: {
+                if (visible) {
+                    audioMuted = false;
+                    wake();
+                    if (stopped) {
+                        stopped = false;
+                        reloadQuietly();
                     }
-                }
-
-                // Videos and games may go full screen; Back brings the page back.
-                onFullScreenRequested: request => {
-                    request.accept();
-                    if (request.toggleOn) {
-                        root.showFullScreen();
-                    } else if (!root.startFullScreen) {
-                        root.showNormal();
-                    }
+                } else {
+                    audioMuted = true;
+                    Qt.callLater(() => {
+                        if (!view.visible && view.lifecycleState === WebEngineView.LifecycleState.Active) {
+                            view.lifecycleState = WebEngineView.LifecycleState.Frozen;
+                        }
+                    });
                 }
             }
 
-            // The start screen until a page is opened.
-            ColumnLayout {
-                anchors.centerIn: parent
-                visible: !root.hasPage
-                spacing: Kirigami.Units.largeSpacing * 2
+            onUrlChanged: {
+                const t = root.tabs[tabId];
+                if (t && url.toString() !== "" && url.toString() !== t.url) {
+                    t.url = url.toString();
+                    root.revision++;
+                    root.scheduleSave();
+                }
+            }
 
-                Image {
-                    Layout.alignment: Qt.AlignHCenter
-                    source: "qrc:/sofa/icon.svg"
-                    sourceSize.width: Kirigami.Units.gridUnit * 8
-                    sourceSize.height: Kirigami.Units.gridUnit * 8
-                    Accessible.ignored: true
+            onTitleChanged: {
+                const t = root.tabs[tabId];
+                if (!t) {
+                    return;
                 }
-                Kirigami.Heading {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: "Sofa"
-                    level: 1
+                t.title = title;
+                root.revision++;
+                if (!t.private) {
+                    Library.updateTitle(url.toString(), title);
                 }
-                QQC2.Label {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: qsTr("Type a web address or something to search for, then press OK.")
-                    color: Kirigami.Theme.disabledTextColor
+            }
+
+            // A redirect keeps what the navigation it belongs to decided.
+            onNavigationRequested: request => {
+                if (!request.isMainFrame || request.navigationType === WebEngineNavigationRequest.RedirectNavigation) {
+                    return;
+                }
+                countsAsVisit = !quietLoad && request.navigationType !== WebEngineNavigationRequest.ReloadNavigation;
+                quietLoad = false;
+            }
+
+            onLoadingChanged: loadingInfo => {
+                // A load the engine starts without asking (an unloaded page coming back) still meets Sofa's mark.
+                if (loadingInfo.status === WebEngineLoadingInfo.LoadStartedStatus && quietLoad) {
+                    countsAsVisit = false;
+                    quietLoad = false;
+                }
+                const t = root.tabs[tabId];
+                if (t && !t.private && countsAsVisit && loadingInfo.status === WebEngineLoadingInfo.LoadSucceededStatus) {
+                    Library.recordVisit(title, loadingInfo.url.toString());
+                }
+            }
+
+            // Private by default: pages get no camera, microphone, location, screen or notifications.
+            onPermissionRequested: permission => permission.deny()
+
+            // A window the page opens on a press (a link with target=_blank, window.open on a click) opens in this
+            // tab; windows a page opens on its own are dropped. Only the user opens tabs.
+            onNewWindowRequested: request => {
+                if (request.userInitiated) {
+                    view.url = request.requestedUrl;
+                }
+            }
+
+            // A link held with OK (or right-clicked): Sofa's link menu instead of the engine's.
+            onContextMenuRequested: request => {
+                request.accepted = true;
+                const link = request.linkUrl.toString();
+                const found = link !== "" && Session.isWebUrl(link);
+                pointer.answered(found);
+                if (found) {
+                    root.askLink(link, request.linkText);
+                }
+            }
+
+            // Leaving the page's full screen gives the window back the mode it had before (F11 may have changed it).
+            onFullScreenRequested: request => {
+                request.accept();
+                if (request.toggleOn) {
+                    if (root.visibility !== Window.FullScreen) {
+                        root.windowedBeforePage = true;
+                    }
+                    root.showFullScreen();
+                } else if (root.windowedBeforePage) {
+                    root.windowedBeforePage = false;
+                    root.showNormal();
+                }
+            }
+
+            // The engine's page process ended (out of memory, a crash): the tab reloads now if in sight, or else
+            // when shown again.
+            onRenderProcessTerminated: (status, code) => {
+                if (status === WebEngineView.NormalTerminationStatus) {
+                    return;
+                }
+                if (visible) {
+                    root.notify(qsTr("This page stopped. Reloading it."));
+                    reloadQuietly();
+                } else {
+                    stopped = true;
                 }
             }
         }
+    }
+
+    function askLink(link, text) {
+        linkMenu.ask(text && text.trim() !== "" ? text.trim() : link, link, [
+            { text: qsTr("Open in new tab"), value: "tab" },
+            { text: qsTr("Open"), value: "open" },
+            { text: Library.isBookmarked(link) ? qsTr("Remove bookmark") : qsTr("Bookmark link"), value: "bookmark" }
+        ], value => {
+            if (value === "tab") {
+                openInNewTab(link);
+            } else if (value === "open") {
+                openInCurrent(link);
+            } else {
+                const now = Library.toggleBookmark(text && text.trim() !== "" ? text.trim() : link, link);
+                notify(now ? qsTr("Bookmarked") : qsTr("Bookmark removed"));
+            }
+        });
+    }
+
+    StartPage {
+        id: startPage
+        anchors.fill: parent
+        visible: root.screen === "start"
+        focus: visible
+        privateMode: root.privateMode
+        Keys.onBackPressed: root.backOnStart()
+        Keys.onEscapePressed: root.backOnStart()
+        onOpenUrl: url => root.openInCurrent(url)
+        onSearch: {
+            root.openScreen("search");
+            searchScreen.start("");
+        }
+        onOpenBookmarks: folder => {
+            root.openScreen("bookmarks");
+            bookmarksScreen.start(folder);
+        }
+        onOpenHistory: {
+            root.openScreen("history");
+            historyScreen.start();
+        }
+        onTogglePrivate: root.togglePrivate()
+        onOpenSettings: root.openSettings()
+        onExitRequested: root.quit()
+        onTileHeld: tile => tileMenu.ask(tile.title, tile.url, [
+            { text: qsTr("Move"), detail: qsTr("Then Left and Right, and OK to put it down"), value: "move" },
+            { text: qsTr("Edit"), value: "edit" },
+            { text: qsTr("Remove"), value: "remove" }
+        ], value => {
+            if (value === "move") {
+                startPage.startMoving(tile.id);
+            } else if (value === "edit") {
+                root.editTile(tile);
+            } else {
+                Library.removeTile(tile.id);
+                startPage.refresh();
+                startPage.focusFirst();
+            }
+        })
+        onAddTile: root.editTile(null)
+    }
+
+    // Adds a Quick access tile (`tile` null) or changes one: its address, then its name.
+    function editTile(tile) {
+        tileDialog.ask({ title: tile ? qsTr("Site address") : qsTr("Add site"), text: tile ? tile.url : "https://", address: true,
+                         message: qsTr("The page this tile opens.") }, typed => {
+            const url = Session.webAddress(typed);
+            if (url === "") {
+                return qsTr("Type a web address, such as example.com.");
+            }
+            Qt.callLater(() => tileDialog.ask({ title: qsTr("Tile name"), text: tile ? tile.title : Session.label(url) }, name => {
+                if (tile) {
+                    Library.updateTile(tile.id, name, url);
+                } else {
+                    Library.addTile(name, url);
+                }
+                startPage.refresh();
+                startPage.focusFirst();
+                return "";
+            }));
+            return "";
+        });
+    }
+
+    SearchScreen {
+        id: searchScreen
+        anchors.fill: parent
+        visible: root.screen === "search"
+        focus: visible
+        onOpenText: text => root.openInCurrent(Session.resolveAddress(text))
+        onOpenUrl: url => root.openInCurrent(url)
+        onBack: root.screenBack()
+    }
+
+    BookmarksScreen {
+        id: bookmarksScreen
+        anchors.fill: parent
+        visible: root.screen === "bookmarks"
+        focus: visible
+        onOpenUrl: url => root.openInCurrent(url)
+        onBack: root.screenBack()
+    }
+
+    HistoryScreen {
+        id: historyScreen
+        anchors.fill: parent
+        visible: root.screen === "history"
+        focus: visible
+        onOpenUrl: url => root.openInCurrent(url)
+        onBack: root.screenBack()
+    }
+
+    SettingsScreen {
+        id: settingsScreen
+        anchors.fill: parent
+        visible: root.screen === "settings"
+        focus: visible
+        onChooseEngine: {
+            root.openScreen("setup");
+            setupScreen.start();
+        }
+        onBack: root.screenBack()
+    }
+
+    SetupScreen {
+        id: setupScreen
+        anchors.fill: parent
+        visible: root.screen === "setup"
+        focus: visible
+        onDone: {
+            if (root.afterSetup) {
+                const next = root.afterSetup;
+                root.afterSetup = null;
+                next();
+            } else {
+                root.screenBack();
+            }
+        }
+    }
+
+    ChoiceDialog {
+        id: linkMenu
+        onClosed: if (root.screen === "page" && root.currentView) root.currentView.forceActiveFocus()
+    }
+    ChoiceDialog {
+        id: tabMenu
+        onClosed: if (root.menuShown) menu.show()
+    }
+    ChoiceDialog {
+        id: tileMenu
+        onClosed: if (root.screen === "start" && !tileDialog.visible && startPage.movingTile < 0) startPage.focusFirst()
+    }
+    TextDialog {
+        id: tileDialog
+        onClosed: if (root.screen === "start" && !tileMenu.visible) startPage.focusFirst()
     }
 }

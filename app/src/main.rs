@@ -1,7 +1,10 @@
 //! Sofa for Linux: a TV web browser for KDE Plasma Bigscreen, driven by a remote.
 
 mod core_object;
+mod library_object;
 mod options;
+mod paths;
+mod session_object;
 mod shell;
 
 use std::process::ExitCode;
@@ -9,11 +12,12 @@ use std::process::ExitCode;
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 use sofa_core::address::{self, SearchEngine};
 use sofa_core::requests;
+use sofa_core::settings::{KeyFile, SETTINGS};
 
 use options::{Mode, Options};
 
 /// The reverse-DNS app ID: Wayland app ID, `.desktop` file name and data folder name.
-const APP_ID: &str = env!("SOFA_APP_ID");
+pub const APP_ID: &str = env!("SOFA_APP_ID");
 /// QtWebEngine's name for the profile that keeps cookies, cache and site data.
 const PROFILE_NAME: &str = "default";
 const MAIN_QML: &str = "qrc:/qt/qml/Sofa/qml/Main.qml";
@@ -69,13 +73,17 @@ fn run(options: &Options) -> ExitCode {
         }
         _ => {
             let start_url = options.start.as_deref().map(start_address).unwrap_or_default();
-            shell::ffi::prepare_engine(
+            let first = shell::ffi::prepare_engine(
                 engine_ref.as_mut(),
                 &QString::from(PROFILE_NAME),
                 shell::RequestPolicy::new(request_policy()),
                 &QString::from(start_url.as_str()),
                 !options.windowed,
             );
+            if !first {
+                // The Sofa already running opens it.
+                return ExitCode::SUCCESS;
+            }
             MAIN_QML
         }
     };
@@ -96,7 +104,13 @@ fn start_address(arg: &str) -> String {
     if arg.get(..5).is_some_and(|s| s.eq_ignore_ascii_case("file:")) {
         return arg.to_owned();
     }
-    address::resolve(arg, &SearchEngine::default()).unwrap_or_default()
+    address::resolve(arg, chosen_engine()).unwrap_or_default()
+}
+
+/// The search engine chosen in Settings, or the default until one is.
+fn chosen_engine() -> &'static SearchEngine {
+    let settings = KeyFile::load(paths::config_dir().map(|d| d.join("settings.conf")), SETTINGS);
+    address::engine(settings.get("search_engine")).unwrap_or(&SearchEngine::DUCKDUCKGO)
 }
 
 /// The request rules. Only a development aid exists so far: `SOFA_BLOCK_HOSTS`, a comma-separated host list,

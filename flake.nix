@@ -11,8 +11,8 @@
 
       # CXX-Qt finds every Qt module through one qmake, but on Nix each module has its own store path: this joins them.
       qtEnv = pkgs: pkgs.qt6.env "sofa-qt" (with pkgs.qt6; [ qtdeclarative qtwebengine qtsvg qtwayland ]);
-      # lld (which CXX-Qt picks, see below) is not wrapped by Nix, so it is told where Qt and the C++ library are.
-      rpathFlags = pkgs: "-C link-arg=-Wl,-rpath,${qtEnv pkgs}/lib:${pkgs.stdenv.cc.cc.lib}/lib";
+      # lld (which CXX-Qt picks, see below) is not wrapped by Nix, so it is told where Qt, the C++ library and SQLite are.
+      rpathFlags = pkgs: "-C link-arg=-Wl,-rpath,${qtEnv pkgs}/lib:${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.sqlite.out}/lib";
 
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
 
@@ -27,14 +27,14 @@
         cargoDeps = pkgs.rustPlatform.importCargoLock { lockFile = ./Cargo.lock; };
 
         nativeBuildInputs = with pkgs; [
-          cmake ninja cargo rustc
+          cmake ninja cargo rustc pkg-config
           # CXX-Qt links with lld when it finds it (GNU ld gets the order of its static libraries wrong).
           lld
           rustPlatform.cargoSetupHook
           qt6.wrapQtAppsHook
         ];
         buildInputs = with pkgs; [
-          qt6.qtbase qt6.qtdeclarative qt6.qtwebengine qt6.qtsvg qt6.qtwayland
+          qt6.qtbase qt6.qtdeclarative qt6.qtwebengine qt6.qtsvg qt6.qtwayland sqlite
           kdePackages.kirigami kdePackages.qqc2-desktop-style
         ];
         nativeCheckInputs = with pkgs; [ desktop-file-utils appstream ];

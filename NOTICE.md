@@ -16,8 +16,11 @@ compatible with the GPL-3.0):
 - [CXX](https://github.com/dtolnay/cxx), MIT or Apache-2.0
 - [url](https://github.com/servo/rust-url) and its dependencies (`idna`, `percent-encoding`, ICU4X crates), MIT or
   Apache-2.0, ICU4X under Unicode-3.0
+- [rusqlite](https://github.com/rusqlite/rusqlite) and `libsqlite3-sys`, MIT, with their dependencies
+  (`hashlink`, `fallible-iterator`, `fallible-streaming-iterator`, `bitflags`, `smallvec`), MIT or Apache-2.0
+- [serde_json](https://github.com/serde-rs/json) and `serde`, MIT or Apache-2.0
 
 ## Used, not included
 
-Qt (LGPL-3.0), Qt WebEngine (LGPL-3.0, with Chromium's licences) and KDE's Kirigami (LGPL-2.0-or-later) come from
-your system or the Flatpak runtime and are not part of this source tree.
+Qt (LGPL-3.0), Qt WebEngine (LGPL-3.0, with Chromium's licences), KDE's Kirigami (LGPL-2.0-or-later) and SQLite
+(public domain) come from your system or the Flatpak runtime and are not part of this source tree.

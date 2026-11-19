@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 url.workspace = true
+rusqlite.workspace = true
 
 [lints]
 workspace = true

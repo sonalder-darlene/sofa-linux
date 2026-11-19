@@ -22,7 +22,7 @@ option(SOFA_CARGO_OFFLINE "Build only from vendored or already downloaded crates
 include(GNUInstallDirs)
 
 # Fail here, with package names, rather than deep inside Cargo.
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick WebEngineQuick Svg)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui DBus Qml Quick WebEngineQuick Svg)
 find_program(CARGO cargo REQUIRED)
 get_target_property(_qmake Qt6::qmake IMPORTED_LOCATION)
 if(DEFINED ENV{QMAKE})

@@ -58,10 +58,10 @@ os_id() {
 # on each of these in a container.
 deps_packages() {
     case "$1" in
-        arch) echo "base-devel cmake ninja rust lld qt6-base qt6-declarative qt6-webengine qt6-svg qt6-wayland kirigami qqc2-desktop-style" ;;
-        fedora) echo "cmake ninja-build gcc-c++ cargo rust lld qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtwebengine-devel qt6-qtsvg-devel qt6-qtwayland kf6-kirigami kf6-qqc2-desktop-style" ;;
-        debian) echo "build-essential ca-certificates cmake ninja-build cargo rustc lld qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-webengine-dev qt6-svg-dev qt6-svg-plugins qt6-wayland qml6-module-org-kde-kirigami qml6-module-qtwebengine qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-window qml6-module-qtquick-templates qml6-module-qtqml-workerscript qml6-module-org-kde-desktop" ;;
-        opensuse) echo "cmake ninja gcc-c++ cargo lld qt6-base-devel qt6-declarative-devel qt6-webenginequick-devel qt6-webengine-imports qt6-svg-devel qt6-wayland kf6-kirigami-imports kf6-qqc2-desktop-style" ;;
+        arch) echo "base-devel cmake ninja rust lld sqlite qt6-base qt6-declarative qt6-webengine qt6-svg qt6-wayland kirigami qqc2-desktop-style" ;;
+        fedora) echo "cmake ninja-build gcc-c++ cargo rust lld pkgconf-pkg-config sqlite-devel qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtwebengine-devel qt6-qtsvg-devel qt6-qtwayland kf6-kirigami kf6-qqc2-desktop-style" ;;
+        debian) echo "build-essential ca-certificates cmake ninja-build cargo rustc lld pkgconf libsqlite3-dev qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-webengine-dev qt6-svg-dev qt6-svg-plugins qt6-wayland qml6-module-org-kde-kirigami qml6-module-qtwebengine qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-window qml6-module-qtquick-templates qml6-module-qtqml-workerscript qml6-module-qtquick-dialogs qml6-module-org-kde-desktop" ;;
+        opensuse) echo "cmake ninja gcc-c++ cargo lld pkgconf sqlite3-devel qt6-base-devel qt6-declarative-devel qt6-webenginequick-devel qt6-webengine-imports qt6-svg-devel qt6-wayland kf6-kirigami-imports kf6-qqc2-desktop-style" ;;
         *) return 1 ;;
     esac
 }
@@ -104,7 +104,7 @@ cmd_deps() {
             ;;
     esac
     local cmd
-    cmd="$(deps_command "$os" "$yes")" || die "I don't know this distribution's package names. You need: CMake, Ninja, a C++ compiler, Rust (cargo), lld, Qt 6.8 or newer (Base, Declarative, WebEngine, Svg, Wayland) and KDE's Kirigami. Or use the Flatpak: ./sofa.sh flatpak"
+    cmd="$(deps_command "$os" "$yes")" || die "I don't know this distribution's package names. You need: CMake, Ninja, a C++ compiler, Rust (cargo), lld, pkg-config, SQLite, Qt 6.8 or newer (Base, Declarative, WebEngine, Svg, Wayland) and KDE's Kirigami. Or use the Flatpak: ./sofa.sh flatpak"
     if $install; then
         say "Installing the build dependencies:"
         echo "  $cmd"

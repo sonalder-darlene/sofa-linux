@@ -15,12 +15,40 @@ pub struct SearchEngine {
     pub name: &'static str,
     /// Address template; `%s` is replaced with the percent-encoded query.
     pub template: &'static str,
+    /// Works only with a paid account or key.
+    pub paid: bool,
+}
+
+const fn engine_entry(id: &'static str, name: &'static str, template: &'static str, paid: bool) -> SearchEngine {
+    SearchEngine { id, name, template, paid }
+}
+
+/// The first-start choices, A to Z, as on Android: templates from each engine's OpenSearch description, minus
+/// traffic-source markers. Showing the list contacts no one.
+pub const ENGINES: &[SearchEngine] = &[
+    engine_entry("brave", "Brave Search", "https://search.brave.com/search?q=%s", false),
+    SearchEngine::DUCKDUCKGO,
+    engine_entry("ecosia", "Ecosia", "https://www.ecosia.org/search?q=%s", false),
+    engine_entry("google", "Google", "https://www.google.com/search?q=%s", false),
+    engine_entry("kagi", "Kagi", "https://kagi.com/search?q=%s", true),
+    engine_entry("metager", "MetaGer", "https://metager.org/meta/meta.ger3?eingabe=%s", true),
+    engine_entry("mojeek", "Mojeek", "https://www.mojeek.com/search?q=%s", false),
+    engine_entry("murena", "Murena Find", "https://murena.qwant.com/?q=%s", false),
+    engine_entry("qwant", "Qwant", "https://www.qwant.com/?q=%s", false),
+    engine_entry("startpage", "Startpage", "https://www.startpage.com/sp/search?query=%s", false),
+    engine_entry("swisscows", "Swisscows", "https://swisscows.com/web?query=%s", false),
+    engine_entry("uruky", "Uruky", "https://uruky.com/search?q=%s", true),
+];
+
+/// The engine stored as `id`.
+#[must_use]
+pub fn engine(id: &str) -> Option<&'static SearchEngine> {
+    ENGINES.iter().find(|e| e.id == id)
 }
 
 impl SearchEngine {
-    /// DuckDuckGo, the default on Android too.
-    pub const DUCKDUCKGO: Self =
-        Self { id: "duckduckgo", name: "DuckDuckGo", template: "https://duckduckgo.com/?q=%s" };
+    /// DuckDuckGo, the default on Android too (used until the user picks one).
+    pub const DUCKDUCKGO: Self = engine_entry("duckduckgo", "DuckDuckGo", "https://duckduckgo.com/?q=%s", false);
 
     /// The address that searches for `query`.
     #[must_use]
@@ -258,6 +286,17 @@ mod tests {
         assert_eq!(engine.search_url("a&b=c#d"), "https://duckduckgo.com/?q=a%26b%3Dc%23d");
         assert_eq!(engine.search_url("crème brûlée"), "https://duckduckgo.com/?q=cr%C3%A8me%20br%C3%BBl%C3%A9e");
         assert_eq!(engine.search_url("it's (ok)!*~"), "https://duckduckgo.com/?q=it's%20(ok)!*~");
+    }
+
+    #[test]
+    fn every_engine_has_a_query_slot_and_a_unique_id() {
+        let mut ids: Vec<&str> = ENGINES.iter().map(|e| e.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), ENGINES.len());
+        assert!(ENGINES.iter().all(|e| e.template.starts_with("https://") && e.template.contains("%s")));
+        assert_eq!(engine("kagi").map(|e| e.paid), Some(true));
+        assert!(engine("nope").is_none());
     }
 
     #[test]
