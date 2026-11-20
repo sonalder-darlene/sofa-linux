@@ -16,5 +16,6 @@ pub mod popups;
 pub mod requests;
 pub mod settings;
 pub mod sites;
+pub mod sqlite;
 pub mod start;
 pub mod tabs;

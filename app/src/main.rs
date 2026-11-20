@@ -151,11 +151,7 @@ fn start_ad_blocker() {
     ads.set_enabled(settings.get("adblock") == "true");
     ads.set_allowlist(AdAllowlist::load(config.map(|d| d.join(AD_ALLOWLIST_FILE))));
     let ads = Arc::clone(ads);
-    let spawned = std::thread::Builder::new().name("sofa-filters".to_owned()).spawn(move || {
-        if let Err(error) = ads.load_bundled() {
-            eprintln!("sofa-tv-browser: the built-in filter lists could not be read ({error}); ads are not blocked");
-        }
-    });
+    let spawned = std::thread::Builder::new().name("sofa-filters".to_owned()).spawn(move || ads.load_bundled());
     if let Err(error) = spawned {
         eprintln!("sofa-tv-browser: the filter lists could not be loaded ({error}); ads are not blocked");
     }

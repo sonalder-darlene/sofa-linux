@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::Path;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use crate::sqlite::{self, Connection, Value};
 
 use crate::bookmark_file::{Entry, FolderEntry};
 use crate::folders::{Folder, FolderId, FolderTree};
@@ -50,7 +50,7 @@ pub struct Imported {
 
 /// A database failure.
 #[derive(Debug)]
-pub struct Error(rusqlite::Error);
+pub struct Error(sqlite::Error);
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -64,8 +64,8 @@ impl std::error::Error for Error {
     }
 }
 
-impl From<rusqlite::Error> for Error {
-    fn from(e: rusqlite::Error) -> Self {
+impl From<sqlite::Error> for Error {
+    fn from(e: sqlite::Error) -> Self {
         Self(e)
     }
 }
@@ -126,9 +126,8 @@ impl Library {
     }
 
     fn with(db: Connection) -> Result<Self> {
-        db.pragma_update(None, "journal_mode", "WAL")?;
-        db.pragma_update(None, "foreign_keys", false)?;
-        let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF;")?;
+        let version: i64 = db.query_one("PRAGMA user_version", &[], |r| r.get(0))?;
         if version < 1 {
             db.execute_batch(
                 "BEGIN;
@@ -144,7 +143,10 @@ impl Library {
                  COMMIT;",
             )?;
             for (i, (title, url)) in DEFAULT_TILES.iter().enumerate() {
-                db.execute("INSERT INTO tiles (title, url, position) VALUES (?1, ?2, ?3)", params![title, url, i])?;
+                db.execute(
+                    "INSERT INTO tiles (title, url, position) VALUES (?1, ?2, ?3)",
+                    &[(*title).into(), (*url).into(), i.into()],
+                )?;
             }
         }
         Ok(Self { db, most_visited: RefCell::new(None) })
@@ -163,7 +165,7 @@ impl Library {
     ///
     /// A database failure.
     pub fn tiles(&self) -> Result<Vec<Site>> {
-        self.sites("SELECT id, title, url FROM tiles ORDER BY position", [])
+        self.sites("SELECT id, title, url FROM tiles ORDER BY position", &[])
     }
 
     /// Adds a tile at the end.
@@ -175,7 +177,7 @@ impl Library {
         self.forget_most_visited();
         self.db.execute(
             "INSERT INTO tiles (title, url, position) VALUES (?1, ?2, (SELECT COALESCE(MAX(position) + 1, 0) FROM tiles))",
-            params![non_blank(title, url), url],
+            &[non_blank(title, url).into(), url.into()],
         )?;
         Ok(())
     }
@@ -187,8 +189,10 @@ impl Library {
     /// A database failure.
     pub fn update_tile(&self, id: i64, title: &str, url: &str) -> Result<()> {
         self.forget_most_visited();
-        self.db
-            .execute("UPDATE tiles SET title = ?1, url = ?2 WHERE id = ?3", params![non_blank(title, url), url, id])?;
+        self.db.execute(
+            "UPDATE tiles SET title = ?1, url = ?2 WHERE id = ?3",
+            &[non_blank(title, url).into(), url.into(), id.into()],
+        )?;
         Ok(())
     }
 
@@ -199,7 +203,7 @@ impl Library {
     /// A database failure.
     pub fn remove_tile(&self, id: i64) -> Result<()> {
         self.forget_most_visited();
-        self.db.execute("DELETE FROM tiles WHERE id = ?1", [id])?;
+        self.db.execute("DELETE FROM tiles WHERE id = ?1", &[id.into()])?;
         Ok(())
     }
 
@@ -211,7 +215,7 @@ impl Library {
     pub fn reorder_tiles(&mut self, ids: &[i64]) -> Result<()> {
         let tx = self.db.transaction()?;
         for (i, id) in ids.iter().enumerate() {
-            tx.execute("UPDATE tiles SET position = ?1 WHERE id = ?2", params![i, id])?;
+            tx.execute("UPDATE tiles SET position = ?1 WHERE id = ?2", &[i.into(), (*id).into()])?;
         }
         tx.commit()?;
         Ok(())
@@ -228,7 +232,7 @@ impl Library {
         let limit = if limit == 0 { -1 } else { i64::try_from(limit).unwrap_or(i64::MAX) };
         self.sites(
             "SELECT id, title, url FROM bookmarks WHERE folder IS ?1 ORDER BY created DESC, id DESC LIMIT ?2",
-            params![folder.map(|f| f.0), limit],
+            &[folder.map(|f| f.0).into(), limit.into()],
         )
     }
 
@@ -238,9 +242,10 @@ impl Library {
     ///
     /// A database failure.
     pub fn bookmark_counts(&self) -> Result<HashMap<Option<FolderId>, usize>> {
-        let mut stmt = self.db.prepare("SELECT folder, COUNT(*) FROM bookmarks GROUP BY folder")?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, Option<i64>>(0)?.map(FolderId), r.get::<_, i64>(1)?)))?;
-        rows.map(|r| r.map(|(f, n)| (f, usize::try_from(n).unwrap_or(0))).map_err(Error::from)).collect()
+        let rows = self.db.query_all("SELECT folder, COUNT(*) FROM bookmarks GROUP BY folder", &[], |r| {
+            Ok((r.get::<Option<i64>>(0)?.map(FolderId), usize::try_from(r.get::<i64>(1)?).unwrap_or(0)))
+        })?;
+        Ok(rows.into_iter().collect())
     }
 
     /// All folders as a tree.
@@ -249,16 +254,15 @@ impl Library {
     ///
     /// A database failure.
     pub fn folder_tree(&self) -> Result<FolderTree> {
-        let mut stmt = self.db.prepare("SELECT id, parent, title, created FROM folders")?;
-        let rows = stmt.query_map([], |r| {
+        let rows = self.db.query_all("SELECT id, parent, title, created FROM folders", &[], |r| {
             Ok(Folder {
                 id: FolderId(r.get(0)?),
-                parent: r.get::<_, Option<i64>>(1)?.map(FolderId),
+                parent: r.get::<Option<i64>>(1)?.map(FolderId),
                 title: r.get(2)?,
                 created: r.get(3)?,
             })
         })?;
-        Ok(FolderTree::new(rows.collect::<rusqlite::Result<Vec<_>>>()?))
+        Ok(FolderTree::new(rows))
     }
 
     /// Whether `url` is bookmarked.
@@ -267,7 +271,7 @@ impl Library {
     ///
     /// A database failure.
     pub fn is_bookmarked(&self, url: &str) -> Result<bool> {
-        Ok(self.db.query_row("SELECT 1 FROM bookmarks WHERE url = ?1", [url], |_| Ok(())).optional()?.is_some())
+        Ok(self.db.query_row("SELECT 1 FROM bookmarks WHERE url = ?1", &[url.into()], |_| Ok(()))?.is_some())
     }
 
     /// Bookmarks `url` at the top level; one already bookmarked stays where it is, with its title.
@@ -278,7 +282,7 @@ impl Library {
     pub fn add_bookmark(&self, title: &str, url: &str, now: i64) -> Result<()> {
         self.db.execute(
             "INSERT OR IGNORE INTO bookmarks (title, url, created) VALUES (?1, ?2, ?3)",
-            params![non_blank(title, url), url, now],
+            &[non_blank(title, url).into(), url.into(), now.into()],
         )?;
         Ok(())
     }
@@ -289,7 +293,7 @@ impl Library {
     ///
     /// A database failure.
     pub fn remove_bookmark(&self, url: &str) -> Result<()> {
-        self.db.execute("DELETE FROM bookmarks WHERE url = ?1", [url])?;
+        self.db.execute("DELETE FROM bookmarks WHERE url = ?1", &[url.into()])?;
         Ok(())
     }
 
@@ -311,7 +315,7 @@ impl Library {
     pub fn add_folder(&self, parent: Option<FolderId>, title: &str, now: i64) -> Result<FolderId> {
         self.db.execute(
             "INSERT INTO folders (parent, title, created) VALUES (?1, ?2, ?3)",
-            params![parent.map(|p| p.0), title, now],
+            &[parent.map(|p| p.0).into(), title.into(), now.into()],
         )?;
         Ok(FolderId(self.db.last_insert_rowid()))
     }
@@ -322,7 +326,7 @@ impl Library {
     ///
     /// A database failure.
     pub fn rename_folder(&self, id: FolderId, title: &str) -> Result<()> {
-        self.db.execute("UPDATE folders SET title = ?1 WHERE id = ?2", params![title, id.0])?;
+        self.db.execute("UPDATE folders SET title = ?1 WHERE id = ?2", &[title.into(), id.0.into()])?;
         Ok(())
     }
 
@@ -332,7 +336,7 @@ impl Library {
     ///
     /// A database failure.
     pub fn move_folder(&self, id: FolderId, to: Option<FolderId>) -> Result<()> {
-        self.db.execute("UPDATE folders SET parent = ?1 WHERE id = ?2", params![to.map(|t| t.0), id.0])?;
+        self.db.execute("UPDATE folders SET parent = ?1 WHERE id = ?2", &[to.map(|t| t.0).into(), id.0.into()])?;
         Ok(())
     }
 
@@ -343,7 +347,7 @@ impl Library {
     /// A database failure.
     pub fn bookmark_folder(&self, id: i64) -> Result<Option<FolderId>> {
         let folder: Option<Option<i64>> =
-            self.db.query_row("SELECT folder FROM bookmarks WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+            self.db.query_row("SELECT folder FROM bookmarks WHERE id = ?1", &[id.into()], |r| r.get(0))?;
         Ok(folder.flatten().map(FolderId))
     }
 
@@ -353,7 +357,7 @@ impl Library {
     ///
     /// A database failure.
     pub fn move_bookmark(&self, id: i64, to: Option<FolderId>) -> Result<()> {
-        self.db.execute("UPDATE bookmarks SET folder = ?1 WHERE id = ?2", params![to.map(|t| t.0), id])?;
+        self.db.execute("UPDATE bookmarks SET folder = ?1 WHERE id = ?2", &[to.map(|t| t.0).into(), id.into()])?;
         Ok(())
     }
 
@@ -363,7 +367,7 @@ impl Library {
     ///
     /// A database failure.
     pub fn delete_bookmark(&self, id: i64) -> Result<()> {
-        self.db.execute("DELETE FROM bookmarks WHERE id = ?1", [id])?;
+        self.db.execute("DELETE FROM bookmarks WHERE id = ?1", &[id.into()])?;
         Ok(())
     }
 
@@ -376,8 +380,8 @@ impl Library {
         let ids = self.folder_tree()?.subtree(id);
         let tx = self.db.transaction()?;
         for f in ids {
-            tx.execute("DELETE FROM bookmarks WHERE folder = ?1", [f.0])?;
-            tx.execute("DELETE FROM folders WHERE id = ?1", [f.0])?;
+            tx.execute("DELETE FROM bookmarks WHERE folder = ?1", &[f.0.into()])?;
+            tx.execute("DELETE FROM folders WHERE id = ?1", &[f.0.into()])?;
         }
         tx.commit()?;
         Ok(())
@@ -390,17 +394,19 @@ impl Library {
     /// A database failure.
     pub fn bookmarks_to_export(&self) -> Result<Vec<Entry>> {
         let tree = self.folder_tree()?;
-        let mut stmt =
-            self.db.prepare("SELECT title, url, created, folder FROM bookmarks ORDER BY created DESC, id DESC")?;
-        let rows = stmt.query_map([], |r| {
-            Ok(Entry {
-                title: r.get(0)?,
-                url: r.get(1)?,
-                added: Some(r.get(2)?),
-                folder: tree.path_names(r.get::<_, Option<i64>>(3)?.map(FolderId)),
-            })
-        })?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        let rows = self.db.query_all(
+            "SELECT title, url, created, folder FROM bookmarks ORDER BY created DESC, id DESC",
+            &[],
+            |r| {
+                Ok(Entry {
+                    title: r.get(0)?,
+                    url: r.get(1)?,
+                    added: Some(r.get(2)?),
+                    folder: tree.path_names(r.get::<Option<i64>>(3)?.map(FolderId)),
+                })
+            },
+        )?;
+        Ok(rows)
     }
 
     /// Every folder by its path, so a file keeps empty ones and the dates they were made.
@@ -440,16 +446,16 @@ impl Library {
                     let made = dates.get(full.as_slice()).copied().unwrap_or(now);
                     tx.execute(
                         "INSERT INTO folders (parent, title, created) VALUES (?1, ?2, ?3)",
-                        params![parent.map(|p| p.0), title, made],
+                        &[parent.map(|p| p.0).into(), title.into(), made.into()],
                     )?;
-                    Ok::<_, rusqlite::Error>(FolderId(tx.last_insert_rowid()))
+                    Ok::<_, sqlite::Error>(FolderId(tx.last_insert_rowid()))
                 })
             };
             for f in folders {
                 make(&mut tree, &f.path)?;
             }
             for (i, e) in entries.iter().enumerate() {
-                let there = tx.query_row("SELECT 1 FROM bookmarks WHERE url = ?1", [&e.url], |_| Ok(())).optional()?;
+                let there = tx.query_row("SELECT 1 FROM bookmarks WHERE url = ?1", &[(&e.url).into()], |_| Ok(()))?;
                 if there.is_some() {
                     continue;
                 }
@@ -457,7 +463,7 @@ impl Library {
                 let created = e.added.unwrap_or_else(|| now - i64::try_from(i).unwrap_or(0));
                 tx.execute(
                     "INSERT INTO bookmarks (title, url, created, folder) VALUES (?1, ?2, ?3, ?4)",
-                    params![non_blank(&e.title, &e.url), e.url, created, to.map(|t| t.0)],
+                    &[non_blank(&e.title, &e.url).into(), (&e.url).into(), created.into(), to.map(|t| t.0).into()],
                 )?;
                 added += 1;
                 if let Some(to) = to {
@@ -477,12 +483,11 @@ impl Library {
     ///
     /// A database failure.
     pub fn history(&self, limit: usize) -> Result<Vec<Visit>> {
-        let mut stmt =
-            self.db.prepare("SELECT id, title, url, visited FROM history ORDER BY visited DESC, id DESC LIMIT ?1")?;
-        let rows = stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)], |r| {
-            Ok(Visit { id: r.get(0)?, title: r.get(1)?, url: r.get(2)?, visited: r.get(3)? })
-        })?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        Ok(self.db.query_all(
+            "SELECT id, title, url, visited FROM history ORDER BY visited DESC, id DESC LIMIT ?1",
+            &[limit.into()],
+            |r| Ok(Visit { id: r.get(0)?, title: r.get(1)?, url: r.get(2)?, visited: r.get(3)? }),
+        )?)
     }
 
     /// Records a visit, folding a reload or a return to the same page within a minute into one row.
@@ -494,11 +499,13 @@ impl Library {
         self.forget_most_visited();
         let updated = self.db.execute(
             "UPDATE history SET title = ?1, visited = ?2 WHERE url = ?3 AND visited > ?4",
-            params![title, now, url, now - SAME_VISIT_MS],
+            &[title.into(), now.into(), url.into(), (now - SAME_VISIT_MS).into()],
         )?;
         if updated == 0 {
-            self.db
-                .execute("INSERT INTO history (title, url, visited) VALUES (?1, ?2, ?3)", params![title, url, now])?;
+            self.db.execute(
+                "INSERT INTO history (title, url, visited) VALUES (?1, ?2, ?3)",
+                &[title.into(), url.into(), now.into()],
+            )?;
         }
         Ok(())
     }
@@ -512,7 +519,7 @@ impl Library {
         self.forget_most_visited();
         self.db.execute(
             "UPDATE history SET title = ?1 WHERE id = (SELECT id FROM history WHERE url = ?2 ORDER BY visited DESC LIMIT 1)",
-            params![title, url],
+            &[title.into(), url.into()],
         )?;
         Ok(())
     }
@@ -524,7 +531,7 @@ impl Library {
     /// A database failure.
     pub fn remove_visit(&self, id: i64) -> Result<()> {
         self.forget_most_visited();
-        self.db.execute("DELETE FROM history WHERE id = ?1", [id])?;
+        self.db.execute("DELETE FROM history WHERE id = ?1", &[id.into()])?;
         Ok(())
     }
 
@@ -535,7 +542,7 @@ impl Library {
     /// A database failure.
     pub fn clear_history(&self) -> Result<()> {
         self.forget_most_visited();
-        self.db.execute("DELETE FROM history", [])?;
+        self.db.execute("DELETE FROM history", &[])?;
         Ok(())
     }
 
@@ -576,9 +583,9 @@ impl Library {
         let mut host_of: HashMap<String, Option<usize>> = HashMap::new();
         let mut stmt =
             self.db.prepare("SELECT url, visited, title FROM history WHERE visited > ?1 ORDER BY visited DESC")?;
-        let mut rows = stmt.query([now - 30 * DAY_MS])?;
+        let mut rows = stmt.query(&[(now - 30 * DAY_MS).into()])?;
         while let Some(row) = rows.next()? {
-            let Ok(url) = row.get_ref(0)?.as_str() else { continue };
+            let Some(url) = row.text(0)? else { continue };
             let Some((scheme, rest)) = url.split_once("://") else { continue };
             if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
                 continue;
@@ -593,7 +600,7 @@ impl Library {
                         .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
                     let i = host.map(|host| {
                         *index.entry(host.clone()).or_insert_with(|| {
-                            let latest = row.get(1).unwrap_or(0);
+                            let latest = row.get::<i64>(1).unwrap_or(0);
                             let scheme = scheme.to_ascii_lowercase();
                             by_host.push((host, Agg { scheme, latest, count: 0, root_title: None }));
                             by_host.len() - 1
@@ -650,19 +657,17 @@ impl Library {
                SELECT MAX(id), title, url, 1 AS rank, MAX(visited) AS t FROM history
                  WHERE url LIKE ?1 ESCAPE '\\' OR title LIKE ?1 ESCAPE '\\' GROUP BY url
              ) GROUP BY url ORDER BY MAX(rank) DESC, MAX(t) DESC LIMIT ?2",
-            params![like, i64::try_from(limit).unwrap_or(i64::MAX)],
+            &[(&like).into(), limit.into()],
         )
     }
 
-    fn sites(&self, sql: &str, args: impl rusqlite::Params) -> Result<Vec<Site>> {
-        let mut stmt = self.db.prepare(sql)?;
-        let rows = stmt.query_map(args, |r| Ok(Site { id: r.get(0)?, title: r.get(1)?, url: r.get(2)? }))?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    fn sites(&self, sql: &str, values: &[Value<'_>]) -> Result<Vec<Site>> {
+        Ok(self.db.query_all(sql, values, |r| Ok(Site { id: r.get(0)?, title: r.get(1)?, url: r.get(2)? }))?)
     }
 }
 
 /// The folder names from the top to `id`, read inside a transaction (folders made a moment ago included).
-fn tree_path(id: Option<FolderId>, tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<Vec<String>> {
+fn tree_path(id: Option<FolderId>, tx: &Connection) -> sqlite::Result<Vec<String>> {
     let mut names = Vec::new();
     let mut at = id;
     while let Some(f) = at {
@@ -670,7 +675,9 @@ fn tree_path(id: Option<FolderId>, tx: &rusqlite::Transaction<'_>) -> rusqlite::
             break;
         }
         let (title, parent): (String, Option<i64>) =
-            tx.query_row("SELECT title, parent FROM folders WHERE id = ?1", [f.0], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            tx.query_one("SELECT title, parent FROM folders WHERE id = ?1", &[f.0.into()], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
         names.push(title);
         at = parent.map(FolderId);
     }
@@ -836,7 +843,7 @@ mod tests {
         for n in 0..3 {
             l.db.execute(
                 "INSERT INTO history (title, url, visited) VALUES ('B', ?1, ?2)",
-                params![format!("https://b.example/{n}"), NOW - n * 120_000],
+                &[format!("https://b.example/{n}").as_str().into(), (NOW - n * 120_000).into()],
             )?;
         }
         assert_eq!(l.most_visited(10, 3, NOW + 1)?.len(), 1);
@@ -892,7 +899,7 @@ mod tests {
     #[test]
     fn a_library_file_reopens_with_its_data() -> Result<()> {
         let dir = std::env::temp_dir().join(format!("sofa-lib-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).map_err(|e| Error(rusqlite::Error::ToSqlConversionFailure(Box::new(e))))?;
+        std::fs::create_dir_all(&dir).expect("a test folder");
         let path = dir.join("library.db");
         {
             let l = Library::open(&path)?;

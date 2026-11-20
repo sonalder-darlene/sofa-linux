@@ -10,13 +10,12 @@
 //! nothing its pages ask for is blocked.
 
 use std::fmt;
-use std::io::{self, Read};
+use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use adblock::Engine;
 use adblock::lists::{FilterFormat, FilterSet, ParseOptions};
-use flate2::read::GzDecoder;
 
 use crate::ad_allowlist::AdAllowlist;
 use crate::requests::{Request, ResourceKind};
@@ -28,19 +27,14 @@ pub struct BundledList {
     pub id: &'static str,
     /// What the list is called where its name is shown.
     pub name: &'static str,
-    gzip: &'static [u8],
+    text: &'static str,
 }
 
 impl BundledList {
-    /// The list's text: one domain per line, `#` comments.
-    ///
-    /// # Errors
-    ///
-    /// The built-in data doesn't unpack, which would be a broken build.
-    pub fn text(&self) -> io::Result<String> {
-        let mut text = String::with_capacity(self.gzip.len() * 6);
-        GzDecoder::new(self.gzip).read_to_string(&mut text)?;
-        Ok(text)
+    /// The list's text: one domain per line, `#` comments. It is kept as plain text, so a refresh reads as a diff.
+    #[must_use]
+    pub const fn text(&self) -> &'static str {
+        self.text
     }
 }
 
@@ -49,12 +43,12 @@ pub const BUNDLED: &[BundledList] = &[
     BundledList {
         id: "stevenblack",
         name: "StevenBlack hosts",
-        gzip: include_bytes!("../../data/filters/stevenblack-hosts.txt.gz"),
+        text: include_str!("../../data/filters/stevenblack-hosts.txt"),
     },
     BundledList {
         id: "hagezi-popups",
         name: "HaGeZi Pop-Up Ads",
-        gzip: include_bytes!("../../data/filters/hagezi-popupads.txt.gz"),
+        text: include_str!("../../data/filters/hagezi-popupads.txt"),
     },
 ];
 
@@ -161,14 +155,8 @@ impl AdBlocker {
     }
 
     /// Compiles the lists built into Sofa.
-    ///
-    /// # Errors
-    ///
-    /// A built-in list doesn't unpack (a broken build). Nothing is loaded then.
-    pub fn load_bundled(&self) -> io::Result<()> {
-        let texts = BUNDLED.iter().map(BundledList::text).collect::<io::Result<Vec<_>>>()?;
-        self.load(texts);
-        Ok(())
+    pub fn load_bundled(&self) {
+        self.load(BUNDLED.iter().map(BundledList::text));
     }
 
     /// Whether ad blocking applies on the page at `page`: switched on, and not switched off for its site.
@@ -316,15 +304,14 @@ mod tests {
     }
 
     #[test]
-    fn the_bundled_lists_unpack_and_block_known_ad_hosts() -> io::Result<()> {
+    fn the_bundled_lists_are_full_and_block_known_ad_hosts() {
         for list in BUNDLED {
-            let text = list.text()?;
+            let text = list.text();
             assert!(text.lines().filter(|l| !l.starts_with('#')).count() > 10_000, "{} is short", list.id);
         }
         let ads = AdBlocker::new(true);
-        ads.load_bundled()?;
+        ads.load_bundled();
         assert!(ads.blocks(&request("https://ad.doubleclick.net/a.png", ResourceKind::Image)));
         assert!(!ads.blocks(&request("https://www.wikipedia.org/static/a.png", ResourceKind::Image)));
-        Ok(())
     }
 }

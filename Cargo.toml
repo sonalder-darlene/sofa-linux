@@ -13,15 +13,11 @@ publish = false
 [workspace.dependencies]
 sofa-core = { path = "core" }
 url = "2.5"
-# The system's SQLite, not a bundled copy: distributions keep it patched.
-rusqlite = "0.37"
 serde_json = "1"
 # Brave's ad-blocking engine. Without its "single-thread" feature, so one engine serves every thread.
 adblock = { version = "0.13.6", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
 # Mozilla's Public Suffix List, to tell sites apart (already in the build through adblock).
 psl = "2.1"
-# Reads the gzip-compressed filter lists built into Sofa (pure Rust, no zlib needed).
-flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
