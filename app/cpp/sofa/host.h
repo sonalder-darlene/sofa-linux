@@ -12,6 +12,7 @@
 #include <QtCore/QVariantMap>
 #include <QtQuick/QQuickItem>
 
+class QQuickWebEngineProfile;
 class QWebEngineUrlRequestInterceptor;
 
 namespace sofa {
@@ -27,7 +28,9 @@ class Host final : public QObject
     Q_PROPERTY(bool typing READ typing WRITE setTyping NOTIFY typingChanged)
 
 public:
-    Host(QWebEngineUrlRequestInterceptor *interceptor, QObject *parent);
+    // `pageScript` runs at the start of every frame of every page, in a world the page's own scripts can't reach
+    // (the pop-up rules' press script).
+    Host(QWebEngineUrlRequestInterceptor *interceptor, const QString &pageScript, QObject *parent);
 
     bool remoteKeys() const { return m_remoteKeys; }
     void setRemoteKeys(bool on);
@@ -38,6 +41,8 @@ public:
     // default one. endPrivateProfile() lets go of it once no page uses it.
     Q_INVOKABLE QObject *newPrivateProfile();
     Q_INVOKABLE void endPrivateProfile(QObject *profile);
+    // Adds the page script to `profile` (the default one; private ones get it when made).
+    void addPageScript(QQuickWebEngineProfile *profile) const;
 
     // A real mouse event at (x, y) in `item`: 0 move, 1 left press, 2 left release, 3 right click.
     Q_INVOKABLE void mouse(QQuickItem *item, int kind, qreal x, qreal y);
@@ -60,12 +65,18 @@ Q_SIGNALS:
     // A remote key while remoteKeys is on; `key` is the Qt::Key, `pressed` false on release. Repeats are left out:
     // the pointer runs on its own clock between press and release.
     void remoteKey(int key, bool pressed);
+    // Something was pressed that may reach the page in front: a click (the pointer's too), a touch, or a key that
+    // activates what has focus. The pop-up rules count presses; what the press landed on the page says itself.
+    void pressed();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+    bool isPress(QEvent *event) const;
+
     QWebEngineUrlRequestInterceptor *m_interceptor;
+    QString m_pageScript;
     bool m_remoteKeys = false;
     bool m_typing = false;
     Qt::MouseButtons m_buttons = Qt::NoButton;

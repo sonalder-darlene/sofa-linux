@@ -11,6 +11,7 @@ pub mod ads;
 pub mod bookmark_file;
 pub mod folders;
 pub mod library;
+pub mod popups;
 pub mod requests;
 pub mod settings;
 pub mod sites;

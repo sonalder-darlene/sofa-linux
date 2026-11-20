@@ -95,12 +95,12 @@ void initWebEngine()
 }
 
 bool prepareEngine(QQmlApplicationEngine &engine, const QString &storageName, rust::Box<RequestPolicy> policy,
-                   const QString &startUrl, bool fullScreen)
+                   const QString &startUrl, bool fullScreen, const QString &pageScript)
 {
     // One interceptor for every profile (the default one and each private session's), owned by the engine so it
     // outlives them all.
     auto *interceptor = new RequestInterceptor(std::move(policy), &engine);
-    auto *host = new Host(interceptor, &engine);
+    auto *host = new Host(interceptor, pageScript, &engine);
     // A Sofa already running takes the address, before this one touches the profile.
     if (host->claimOrHandOver(QGuiApplication::desktopFileName(), startUrl)) {
         return false;
@@ -115,6 +115,7 @@ bool prepareEngine(QQmlApplicationEngine &engine, const QString &storageName, ru
     profile->setStorageName(storageName);
     profile->setOffTheRecord(false);
     profile->setUrlRequestInterceptor(interceptor);
+    host->addPageScript(profile);
 
     engine.setInitialProperties(QVariantMap{
         {QStringLiteral("profile"), QVariant::fromValue(profile)},

@@ -171,6 +171,25 @@ impl AdBlocker {
         Ok(())
     }
 
+    /// Whether ad blocking applies on the page at `page`: switched on, and not switched off for its site.
+    #[must_use]
+    pub fn is_on_for(&self, page: &str) -> bool {
+        self.is_enabled() && !self.allows_site(page)
+    }
+
+    /// Whether the lists name the host of `url`, for the windows a page opens and the pages a site sends Sofa to
+    /// (the pop-up rules, [`crate::popups`]). Whether blocking is on is not asked here.
+    ///
+    /// Sofa's lists are domain lists, and a domain on them stands for the whole host, whatever is asked of it. The
+    /// engine never applies a plain domain rule to a page, so it is asked as for any other part of a page. Lists with
+    /// `$popup` or `$document` rules will need a check of their own here.
+    #[must_use]
+    pub fn lists_host(&self, url: &str) -> bool {
+        let Some(engine) = self.engine.get() else { return false };
+        adblock::request::Request::new(url, url, ResourceKind::Other.as_filter_type(), "GET")
+            .is_ok_and(|r| engine.check_network_request(&r).should_block())
+    }
+
     /// Whether `request` is for an ad or a tracker and must not be sent. Pages themselves (`ResourceKind::Page`)
     /// are never blocked here, nor anything on a site where ad blocking is switched off.
     #[must_use]
@@ -267,6 +286,24 @@ mod tests {
         assert!(ads.allowed_sites().is_empty());
         ads.forget_private();
         assert!(ads.blocks(&on("https://news.example/")));
+        Ok(())
+    }
+
+    #[test]
+    fn listed_hosts_count_for_whole_pages_and_windows() -> io::Result<()> {
+        let ads = loaded(&["ads.example\n"]);
+        assert!(ads.lists_host("https://ads.example/landing?x=1"));
+        assert!(ads.lists_host("https://pop.ads.example/"));
+        assert!(!ads.lists_host("https://news.example/"));
+        assert!(!ads.lists_host("about:blank"));
+        // Listed or not doesn't depend on the switches; whether blocking applies on a page does.
+        ads.set_enabled(false);
+        assert!(ads.lists_host("https://ads.example/"));
+        assert!(!ads.is_on_for("https://news.example/"));
+        ads.set_enabled(true);
+        assert!(ads.is_on_for("https://news.example/"));
+        ads.allow_site("https://news.example/", true, true)?;
+        assert!(!ads.is_on_for("https://news.example/a"));
         Ok(())
     }
 

@@ -18,11 +18,11 @@ struct RequestPolicy; // Rust type, see src/shell.rs
 void initWebEngine();
 
 // Creates the persistent web profile named `storageName`, routes every request through `policy` (in that profile and
-// in private ones), and hands the profile, the Host helper and the start options to the QML root object as its
-// initial properties. Returns false when another Sofa already runs and took the start address (this one then
+// in private ones), runs `pageScript` at the start of every frame of their pages in a world of its own, and hands
+// the profile, the Host helper and the start options to the QML root object as its initial properties. Returns false when another Sofa already runs and took the start address (this one then
 // quits).
 bool prepareEngine(QQmlApplicationEngine &engine, const QString &storageName, rust::Box<RequestPolicy> policy,
-                   const QString &startUrl, bool fullScreen);
+                   const QString &startUrl, bool fullScreen, const QString &pageScript);
 
 // Whether loading the QML gave a root object (a window).
 bool hasWindow(const QQmlApplicationEngine &engine);

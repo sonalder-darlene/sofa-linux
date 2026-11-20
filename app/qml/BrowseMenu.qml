@@ -23,6 +23,8 @@ FocusScope {
     // The page in sight is a web page, and ad blocking is on for its site.
     property bool webPage: false
     property bool adBlockOn: true
+    // A pop-up or redirect was just blocked: "Allow once" shows.
+    property bool allowPending: false
     property real zoom: 1
 
     signal action(string name)
@@ -231,7 +233,7 @@ FocusScope {
                 function buttons() {
                     const out = [];
                     for (let i = 0; i < children.length; i++) {
-                        if (children[i].objectName !== "") {
+                        if (children[i].objectName !== "" && children[i].visible) {
                             out.push(children[i]);
                         }
                     }
@@ -283,6 +285,13 @@ FocusScope {
                     Accessible.name: menu.adBlockOn ? qsTr("Ad blocking on for this site") : qsTr("Ad blocking off for this site")
                     checked: menu.adBlockOn
                     available: menu.webPage
+                }
+                MenuButton {
+                    objectName: "allowOnce"
+                    iconName: "window-new"
+                    text: qsTr("Allow once")
+                    Accessible.name: qsTr("Open the pop-up or redirect just blocked")
+                    visible: menu.allowPending
                 }
                 MenuButton {
                     objectName: "pointer"

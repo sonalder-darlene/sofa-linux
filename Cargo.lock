@@ -853,6 +853,7 @@ version = "0.1.0"
 dependencies = [
  "adblock",
  "flate2",
+ "psl",
  "rusqlite",
  "url",
 ]

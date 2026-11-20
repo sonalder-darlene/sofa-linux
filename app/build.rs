@@ -37,7 +37,13 @@ fn main() {
         "qml/words.js",
     ];
     CxxQtBuilder::new_qml_module(QmlModule::new("Sofa").qml_files(qml).depend("QtQuick"))
-        .files(["src/core_object.rs", "src/shell.rs", "src/library_object.rs", "src/session_object.rs"])
+        .files([
+            "src/core_object.rs",
+            "src/shell.rs",
+            "src/library_object.rs",
+            "src/session_object.rs",
+            "src/popup_object.rs",
+        ])
         .cpp_file("cpp/sofa/host.h")
         .cpp_file("cpp/sofa/host.cpp")
         .qrc("resources.qrc")

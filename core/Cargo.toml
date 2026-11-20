@@ -12,6 +12,7 @@ url.workspace = true
 rusqlite.workspace = true
 adblock.workspace = true
 flate2.workspace = true
+psl.workspace = true
 
 [lints]
 workspace = true

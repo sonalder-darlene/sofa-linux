@@ -12,6 +12,7 @@
 #include <QtGui/QPointingDevice>
 #include <QtGui/QWheelEvent>
 #include <QtQuick/QQuickWindow>
+#include <QtWebEngineCore/QWebEngineScript>
 #include <QtWebEngineQuick/QQuickWebEngineProfile>
 
 namespace sofa {
@@ -79,9 +80,10 @@ bool Host::claimOrHandOver(const QString &appId, const QString &url)
     return true;
 }
 
-Host::Host(QWebEngineUrlRequestInterceptor *interceptor, QObject *parent)
+Host::Host(QWebEngineUrlRequestInterceptor *interceptor, const QString &pageScript, QObject *parent)
     : QObject(parent)
     , m_interceptor(interceptor)
+    , m_pageScript(pageScript)
 {
     qApp->installEventFilter(this);
 }
@@ -111,7 +113,24 @@ QObject *Host::newPrivateProfile()
     auto *profile = new QQuickWebEngineProfile(this);
     profile->setOffTheRecord(true);
     profile->setUrlRequestInterceptor(m_interceptor);
+    addPageScript(profile);
     return profile;
+}
+
+void Host::addPageScript(QQuickWebEngineProfile *profile) const
+{
+    QWebEngineScript script;
+    script.setName(QStringLiteral("sofa-press"));
+    script.setSourceCode(m_pageScript);
+    script.setInjectionPoint(QWebEngineScript::DocumentCreation);
+    script.setWorldId(QWebEngineScript::ApplicationWorld);
+    script.setRunsOnSubFrames(true);
+    // The profile's script list has no public C++ header, only its QML API, so insert() is called through that.
+    // (Binding a view's userScripts in QML instead crashes Qt 6.8 while the view is being made.)
+    auto *scripts = profile->property("userScripts").value<QObject *>();
+    if (!scripts || !QMetaObject::invokeMethod(scripts, "insert", Q_ARG(QWebEngineScript, script))) {
+        qWarning("The page script could not be added: the pop-up rules won't know which link was pressed.");
+    }
 }
 
 void Host::endPrivateProfile(QObject *profile)
@@ -183,9 +202,41 @@ bool Host::editing() const
     return query.value(Qt::ImEnabled).toBool();
 }
 
+bool Host::isPress(QEvent *event) const
+{
+    switch (event->type()) {
+    case QEvent::MouseButtonPress:
+    case QEvent::TouchBegin:
+        return true;
+    case QEvent::KeyPress: {
+        auto *key = static_cast<QKeyEvent *>(event);
+        if (key->isAutoRepeat()) {
+            return false;
+        }
+        switch (key->key()) {
+        case Qt::Key_Space:
+            return true;
+        case Qt::Key_Return:
+        case Qt::Key_Enter:
+        case Qt::Key_Select:
+            // Taken for the pointer (which then clicks, a press of its own) unless the page has them.
+            return !m_remoteKeys || (m_typing && key->key() != Qt::Key_Select);
+        default:
+            return false;
+        }
+    }
+    default:
+        return false;
+    }
+}
+
 bool Host::eventFilter(QObject *watched, QEvent *event)
 {
     const QEvent::Type type = event->type();
+    // Each event reaches the window first, so a press is counted once, there.
+    if (watched->isWindowType() && isPress(event)) {
+        Q_EMIT pressed();
+    }
     if (!m_remoteKeys || (type != QEvent::KeyPress && type != QEvent::KeyRelease && type != QEvent::ShortcutOverride)) {
         return QObject::eventFilter(watched, event);
     }

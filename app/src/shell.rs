@@ -20,8 +20,9 @@ pub mod ffi {
         #[cxx_name = "initWebEngine"]
         fn init_web_engine();
 
-        /// Creates the persistent profile, routes its requests through `policy`, and passes the profile and the
-        /// start options to the QML root object. False when a Sofa already running took `start_url` instead.
+        /// Creates the persistent profile, routes its requests through `policy`, runs `page_script` in every frame
+        /// of its pages (and of private ones), and passes the profile and the start options to the QML root object.
+        /// False when a Sofa already running took `start_url` instead.
         #[namespace = "sofa"]
         #[cxx_name = "prepareEngine"]
         fn prepare_engine(
@@ -30,6 +31,7 @@ pub mod ffi {
             policy: Box<RequestPolicy>,
             start_url: &QString,
             full_screen: bool,
+            page_script: &QString,
         ) -> bool;
 
         /// Whether loading the QML gave a root object (a window).

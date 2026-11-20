@@ -26,9 +26,14 @@ in a new code base made for Linux.
   [HaGeZi's pop-up ad domains](https://github.com/hagezi/dns-blocklists)), so blocking needs no download, and checks
   each request with [Brave's ad-block engine](https://github.com/brave/adblock-rust). A site that doesn't work
   with it can be let through from Sofa's menu (Ad block); in private browsing that lasts until you leave it.
+- **Pop-ups and pop-unders stopped:** a page opens a window only when you press a link to it (or to its own site),
+  one per press, never to a listed host. On its own, a page can't send itself to a listed host, nor to another site
+  behind a window it just opened. Pop-unders that ride on a press on a picture link are stopped too. A blocked pop-up
+  or redirect can be opened once from Sofa's menu (Allow once) for 30 seconds. Windows open in the same tab: only
+  you open tabs.
 - Pages get no camera, microphone, location or notifications.
 
-Pop-up rules, more filter lists, site filters and Sofa's own video player come next.
+More filter lists, site filters and Sofa's own video player come next.
 
 ## Install from the source
 

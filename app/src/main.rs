@@ -4,6 +4,7 @@ mod core_object;
 mod library_object;
 mod options;
 mod paths;
+mod popup_object;
 mod session_object;
 mod shell;
 
@@ -14,6 +15,7 @@ use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 use sofa_core::ad_allowlist::AdAllowlist;
 use sofa_core::address::{self, SearchEngine};
 use sofa_core::ads::AdBlocker;
+use sofa_core::popups::PressTag;
 use sofa_core::requests;
 use sofa_core::settings::{KeyFile, SETTINGS};
 
@@ -84,6 +86,7 @@ fn run(options: &Options) -> ExitCode {
                 shell::RequestPolicy::new(request_policy()),
                 &QString::from(start_url.as_str()),
                 !options.windowed,
+                &QString::from(press_tag().script().as_str()),
             );
             if !first {
                 // The Sofa already running opens it.
@@ -130,6 +133,12 @@ fn request_policy() -> requests::RequestPolicy {
 pub fn ad_blocker() -> &'static Arc<AdBlocker> {
     static ADS: OnceLock<Arc<AdBlocker>> = OnceLock::new();
     ADS.get_or_init(|| Arc::new(AdBlocker::new(true)))
+}
+
+/// The tag of the press script's reports for this run (the pop-up rules, `PopupGuard`).
+pub fn press_tag() -> &'static PressTag {
+    static TAG: OnceLock<PressTag> = OnceLock::new();
+    TAG.get_or_init(PressTag::random)
 }
 
 /// Switches the ad blocker as Settings say, reads the sites where it is switched off, and compiles its lists on a

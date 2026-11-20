@@ -79,6 +79,12 @@ Kirigami.AbstractApplicationWindow {
 
     Connections {
         target: root.host
+        // A press that may reach the page in front: its tab's pop-up rules count it.
+        function onPressed() {
+            if (root.screen === "page" && root.currentView) {
+                root.currentView.guard.press();
+            }
+        }
         // Another launch (a link from another app, the launcher) handed over an address, or asked for the window.
         function onOpenRequested(text) {
             root.raise();
@@ -397,6 +403,11 @@ Kirigami.AbstractApplicationWindow {
         menu.bookmarked = Library.isBookmarked(currentUrl);
         menu.webPage = Session.isWebUrl(currentUrl);
         menu.adBlockOn = Session.value("adblock") === "true" && !Session.adBlockOffHere(currentUrl);
+        // Shown only after a block, and then the menu opens on it.
+        menu.allowPending = currentView !== null && currentView.guard.pending() !== "";
+        if (menu.allowPending) {
+            menu.lastFocused = "allowOnce";
+        }
         menuShown = true;
         menu.show();
     }
@@ -470,6 +481,7 @@ Kirigami.AbstractApplicationWindow {
             historyScreen.start();
             break;
         case "adblock": toggleAdBlockHere(); break;
+        case "allowOnce": allowOnce(); break;
         case "pointer":
             pointerOn = !pointerOn;
             notify(pointerOn ? qsTr("Pointer on: the arrows move it") : qsTr("Pointer off: the arrows go to the page"));
@@ -502,6 +514,16 @@ Kirigami.AbstractApplicationWindow {
         closeMenu();
         if (currentView) {
             currentView.reloadAndBypassCache();
+        }
+    }
+
+    // Opens the pop-up or redirect blocked last in the tab in sight, once.
+    function allowOnce() {
+        const target = currentView ? currentView.guard.takePending() : "";
+        closeMenu();
+        if (target !== "") {
+            currentView.guard.userNavigation();
+            openInCurrent(target);
         }
     }
 
@@ -771,16 +793,66 @@ Kirigami.AbstractApplicationWindow {
                 }
             }
 
-            // A redirect keeps what the navigation it belongs to decided.
-            onNavigationRequested: request => {
-                if (!request.isMainFrame || request.navigationType === WebEngineNavigationRequest.RedirectNavigation) {
+            // The pop-up and redirect rules of this tab: what the user pressed explains where the page may go.
+            property PopupGuard guard: PopupGuard {}
+            // Between a load's start and its end (the engine's own "loading" turns on earlier, for any navigation).
+            property bool inLoad: false
+
+            // Opens a window's first address in this tab, unless the pop-up rules block it. Only web pages open.
+            function openWindow(target, opener, link) {
+                if (!visible || !Session.isWebUrl(target)) {
                     return;
                 }
-                countsAsVisit = !quietLoad && request.navigationType !== WebEngineNavigationRequest.ReloadNavigation;
+                if (guard.window(target, opener, link)) {
+                    // The window came from a press, so its redirects are the user's too.
+                    guard.userNavigation();
+                    url = target;
+                } else {
+                    guard.blocked(target);
+                    root.notify(qsTr("Blocked a pop-up. To open it, use Allow once in the menu."));
+                }
+            }
+
+            // The profile's press script (Host) says here what each press landed on.
+            onJavaScriptConsoleMessage: (level, message, lineNumber, sourceId) => guard.report(message)
+
+            onNavigationRequested: request => {
+                if (!request.isMainFrame) {
+                    return;
+                }
+                const type = request.navigationType;
+                // The engine calls a meta refresh and location.replace() redirects too; those come once the page has
+                // loaded, while a server's redirect comes during its navigation's load. Only that one is a hop.
+                const redirect = type === WebEngineNavigationRequest.RedirectNavigation && inLoad;
+                if (type === WebEngineNavigationRequest.TypedNavigation
+                        || type === WebEngineNavigationRequest.BackForwardNavigation
+                        || type === WebEngineNavigationRequest.ReloadNavigation) {
+                    // Sofa's own loads, Back and Reload: not the page's doing.
+                    guard.userNavigation();
+                } else {
+                    // Qt 6.12 says whether a press started it; before that, a recent press counts.
+                    const gesture = request.userInitiated === undefined ? -1 : request.userInitiated ? 1 : 0;
+                    const target = request.url.toString();
+                    if (!guard.navigation(target, url.toString(), gesture, redirect)) {
+                        request.reject();
+                        guard.blocked(target);
+                        root.notify(qsTr("Blocked a redirect. To follow it, use Allow once in the menu."));
+                        return;
+                    }
+                }
+                // A redirect keeps what the navigation it belongs to decided.
+                if (redirect) {
+                    return;
+                }
+                countsAsVisit = !quietLoad && type !== WebEngineNavigationRequest.ReloadNavigation;
                 quietLoad = false;
             }
 
             onLoadingChanged: loadingInfo => {
+                if (loadingInfo.status === WebEngineLoadingInfo.LoadStartedStatus) {
+                    guard.pageStarted();
+                }
+                inLoad = loadingInfo.status === WebEngineLoadingInfo.LoadStartedStatus;
                 // A load the engine starts without asking (an unloaded page coming back) still meets Sofa's mark.
                 if (loadingInfo.status === WebEngineLoadingInfo.LoadStartedStatus && quietLoad) {
                     countsAsVisit = false;
@@ -796,10 +868,21 @@ Kirigami.AbstractApplicationWindow {
             onPermissionRequested: permission => permission.deny()
 
             // A window the page opens on a press (a link with target=_blank, window.open on a click) opens in this
-            // tab; windows a page opens on its own are dropped. Only the user opens tabs.
+            // tab if the pop-up rules allow it; windows a page opens on its own are dropped. Only the user opens tabs.
+            // A window opened blank gets its address later: a hidden view catches the first one.
             onNewWindowRequested: request => {
-                if (request.userInitiated) {
-                    view.url = request.requestedUrl;
+                if (!guard.windowRequested(request.userInitiated)) {
+                    root.notify(qsTr("Pop-up blocked"));
+                    return;
+                }
+                // What the press was on now, before the page can move things.
+                const link = guard.link();
+                const opener = url.toString();
+                const first = request.requestedUrl.toString();
+                if (first === "" || first === "about:blank") {
+                    root.catchWindow(view, request, opener, link);
+                } else {
+                    openWindow(first, opener, link);
                 }
             }
 
@@ -842,6 +925,52 @@ Kirigami.AbstractApplicationWindow {
                 }
             }
         }
+    }
+
+    // A window opened blank (window.open("") and an address set later): a hidden view in the opener's profile takes
+    // it, hands its first address to the opener's tab for the pop-up rules, and goes. It never loads anything; a
+    // window that gets no address in 10 seconds (filled by the page's script instead) is dropped.
+    Component {
+        id: catcherComponent
+
+        WebEngineView {
+            id: catcher
+
+            property var done: null
+
+            visible: false
+            width: 1
+            height: 1
+            audioMuted: true
+            onNavigationRequested: request => {
+                request.reject();
+                if (request.isMainFrame && done) {
+                    const handOver = done;
+                    done = null;
+                    handOver(request.url.toString());
+                    Qt.callLater(catcher.destroy);
+                }
+            }
+            onPermissionRequested: permission => permission.deny()
+            onNewWindowRequested: request => {}
+
+            Timer {
+                interval: 10000
+                running: true
+                onTriggered: catcher.destroy()
+            }
+        }
+    }
+
+    function catchWindow(view, request, opener, link) {
+        const catcher = catcherComponent.createObject(pageLayer, { profile: view.profile });
+        // A tab closed meanwhile is null here.
+        catcher.done = target => {
+            if (view) {
+                view.openWindow(target, opener, link);
+            }
+        };
+        request.openIn(catcher);
     }
 
     function askLink(link, text) {
