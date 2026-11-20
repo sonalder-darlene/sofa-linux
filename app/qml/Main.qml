@@ -85,6 +85,12 @@ Kirigami.AbstractApplicationWindow {
                 root.currentView.guard.press();
             }
         }
+        // Back from Bigscreen's home (or wherever the window was hidden): the page in sight takes the keys again.
+        function onWindowShownChanged() {
+            if (root.host.windowShown && root.screen === "page" && !root.menuShown && !root.dialogOpen && root.currentView) {
+                root.currentView.forceActiveFocus();
+            }
+        }
         // Another launch (a link from another app, the launcher) handed over an address, or asked for the window.
         function onOpenRequested(text) {
             root.raise();
@@ -748,14 +754,30 @@ Kirigami.AbstractApplicationWindow {
                 reload();
             }
 
+            // Stops what the page plays: every <video> and <audio> in every frame, so it stays paused when the page
+            // comes back (the user starts it again). Run where the page's scripts can't interfere.
+            function pauseMedia() {
+                const script = "for (const m of document.querySelectorAll('video, audio')) { if (!m.paused) m.pause(); }";
+                const frames = [mainFrame];
+                while (frames.length > 0) {
+                    const frame = frames.pop();
+                    frame.runJavaScript(script, WebEngineScript.ApplicationWorld, () => {});
+                    frames.push(...frame.children);
+                }
+            }
+
             anchors.fill: parent
-            visible: root.screen === "page" && root.currentId === tabId
+            // In sight: Sofa shows this tab, and Sofa's window itself can be seen.
+            visible: root.screen === "page" && root.currentId === tabId && root.host.windowShown
             activeFocusOnPress: true
             settings.focusOnNavigationEnabled: false
 
-            // Out of sight: frozen, so it can't play, run or open anything; in sight: running again.
+            // Out of sight (another tab or screen in front, or Sofa's window hidden): muted at once, then its media
+            // paused and the page frozen, so it can't play, run or open anything. In sight: running again, its media
+            // still paused. The steps wait a little so a window hidden for a blink doesn't stop a video.
             onVisibleChanged: {
                 if (visible) {
+                    quietSteps.stop();
                     audioMuted = false;
                     wake();
                     if (stopped) {
@@ -764,11 +786,28 @@ Kirigami.AbstractApplicationWindow {
                     }
                 } else {
                     audioMuted = true;
-                    Qt.callLater(() => {
-                        if (!view.visible && view.lifecycleState === WebEngineView.LifecycleState.Active) {
-                            view.lifecycleState = WebEngineView.LifecycleState.Frozen;
-                        }
-                    });
+                    quietSteps.step = 0;
+                    quietSteps.restart();
+                }
+            }
+
+            Timer {
+                id: quietSteps
+
+                property int step: 0
+
+                interval: 400
+                repeat: true
+                onTriggered: {
+                    if (view.visible || view.lifecycleState !== WebEngineView.LifecycleState.Active) {
+                        stop();
+                    } else if (step++ === 0) {
+                        // The pause runs before the freeze, which would hold it back.
+                        view.pauseMedia();
+                    } else {
+                        stop();
+                        view.lifecycleState = WebEngineView.LifecycleState.Frozen;
+                    }
                 }
             }
 

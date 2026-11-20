@@ -233,6 +233,14 @@ bool Host::isPress(QEvent *event) const
 bool Host::eventFilter(QObject *watched, QEvent *event)
 {
     const QEvent::Type type = event->type();
+    // The compositor says when the window stops being seen (Wayland's "suspended" state, an unmapped X11 window).
+    if (type == QEvent::Expose && watched->isWindowType()) {
+        auto *window = static_cast<QWindow *>(watched);
+        if (!window->transientParent() && window->isExposed() != m_windowShown) {
+            m_windowShown = window->isExposed();
+            Q_EMIT windowShownChanged();
+        }
+    }
     // Each event reaches the window first, so a press is counted once, there.
     if (watched->isWindowType() && isPress(event)) {
         Q_EMIT pressed();

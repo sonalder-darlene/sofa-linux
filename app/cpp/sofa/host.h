@@ -26,6 +26,9 @@ class Host final : public QObject
     // While true (the user is typing in a page's field), Return and Enter from a keyboard reach the page, so a
     // search form can be sent. The remote's OK (Select) always stays with the pointer.
     Q_PROPERTY(bool typing READ typing WRITE setTyping NOTIFY typingChanged)
+    // False while Sofa's window can't be seen: behind Bigscreen's home or another app the compositor hides it from,
+    // minimized, or on another desktop. Losing the keyboard focus to a window beside it doesn't count.
+    Q_PROPERTY(bool windowShown READ windowShown NOTIFY windowShownChanged)
 
 public:
     // `pageScript` runs at the start of every frame of every page, in a world the page's own scripts can't reach
@@ -36,6 +39,7 @@ public:
     void setRemoteKeys(bool on);
     bool typing() const { return m_typing; }
     void setTyping(bool on);
+    bool windowShown() const { return m_windowShown; }
 
     // A new profile for one private browsing session: kept in memory only, with the same request rules as the
     // default one. endPrivateProfile() lets go of it once no page uses it.
@@ -68,6 +72,7 @@ Q_SIGNALS:
     // Something was pressed that may reach the page in front: a click (the pointer's too), a touch, or a key that
     // activates what has focus. The pop-up rules count presses; what the press landed on the page says itself.
     void pressed();
+    void windowShownChanged();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -79,6 +84,7 @@ private:
     QString m_pageScript;
     bool m_remoteKeys = false;
     bool m_typing = false;
+    bool m_windowShown = true;
     Qt::MouseButtons m_buttons = Qt::NoButton;
 };
 
