@@ -111,9 +111,8 @@ bool prepareEngine(QQmlApplicationEngine &engine, const QString &storageName, ru
         QIcon::setFallbackThemeName(QStringLiteral("breeze"));
     }
 
-    auto *profile = new QQuickWebEngineProfile(&engine);
-    profile->setStorageName(storageName);
-    profile->setOffTheRecord(false);
+    // Named at construction (Qt 6.9 and newer): a profile renamed or switched to disk afterwards is on its way out.
+    auto *profile = new QQuickWebEngineProfile(storageName, &engine);
     profile->setUrlRequestInterceptor(interceptor);
     host->addPageScript(profile);
 
@@ -137,6 +136,21 @@ QString engineVersions()
         .arg(QString::fromLatin1(qVersion()), QString::fromLatin1(qWebEngineVersion()),
              QString::fromLatin1(qWebEngineChromiumVersion()),
              QString::fromLatin1(qWebEngineChromiumSecurityPatchVersion()));
+}
+
+QString chromiumVersion()
+{
+    return QString::fromLatin1(qWebEngineChromiumVersion());
+}
+
+QString securityPatchVersion()
+{
+    return QString::fromLatin1(qWebEngineChromiumSecurityPatchVersion());
+}
+
+QString qtVersion()
+{
+    return QString::fromLatin1(qVersion());
 }
 
 QString platformName()

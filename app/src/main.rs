@@ -15,6 +15,7 @@ use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 use sofa_core::ad_allowlist::AdAllowlist;
 use sofa_core::address::{self, SearchEngine};
 use sofa_core::ads::AdBlocker;
+use sofa_core::engine_age;
 use sofa_core::popups::PressTag;
 use sofa_core::requests;
 use sofa_core::settings::{KeyFile, SETTINGS};
@@ -164,11 +165,21 @@ fn start_ad_blocker() {
 fn report_versions() {
     println!("Sofa for Linux {} ({APP_ID})", env!("CARGO_PKG_VERSION"));
     println!("Engine: {}", shell::ffi::engine_versions());
+    let fixes = String::from(&shell::ffi::security_patch_version());
+    let age = match engine_age::major(&fixes) {
+        Some(major) if major < engine_age::MINIMUM => "out of date (Sofa tells the user once in a while)",
+        Some(_) => "current enough",
+        None => "unknown",
+    };
+    println!(
+        "Engine age: {age} (security fixes up to Chromium {fixes}; Sofa asks for {} or newer)",
+        engine_age::MINIMUM
+    );
     println!("Qt platform: {}", shell::ffi::platform_name());
     let session = std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".to_owned());
     println!("Session: {session}");
     println!("Engine sandbox: {}", sandbox_state());
-    println!("Flatpak: {}", if std::path::Path::new("/.flatpak-info").exists() { "yes" } else { "no" });
+    println!("Flatpak: {}", if paths::is_flatpak() { "yes" } else { "no" });
 }
 
 /// Whether Chromium's sandbox was switched off through the environment.

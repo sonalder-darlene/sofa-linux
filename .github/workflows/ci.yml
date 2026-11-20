@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 #
 # Every way in is built on every push, so none of them rots: lint, Nix, the direct build on four distributions
-# (the same ./sofa.sh steps a user runs), and the Flatpak on x86_64 and aarch64.
+# (the same ./sofa.sh steps a user runs) where the distribution has Qt 6.11 or newer, the Flatpak hint where it hasn't,
+# and the Flatpak on x86_64 and aarch64.
 name: CI
 
 on:
@@ -38,8 +39,9 @@ jobs:
       matrix:
         image:
           - archlinux:latest
-          - registry.fedoraproject.org/fedora:43
-          - debian:trixie
+          # The oldest Fedora and Debian with Qt 6.11, Sofa's floor.
+          - registry.fedoraproject.org/fedora:44
+          - debian:testing
           - opensuse/tumbleweed
     runs-on: ubuntu-24.04
     container: ${{ matrix.image }}
@@ -69,6 +71,26 @@ jobs:
           name: check-${{ strategy.job-index }}
           path: check.txt
 
+  # Distributions whose Qt is older than 6.11: ./sofa.sh deps must say so and point to the Flatpak, installing nothing.
+  too-old:
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - debian:trixie
+          - ubuntu:26.04
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates
+      - uses: actions/checkout@v5
+      - name: ./sofa.sh deps refuses, with the Flatpak hint
+        run: |
+          if ./sofa.sh deps --install --yes 2> err.txt; then echo "deps went ahead on an old Qt"; exit 1; fi
+          cat err.txt
+          grep -q "sofa.sh flatpak" err.txt
+          if dpkg -l qt6-base-dev 2>/dev/null | grep -q ^ii; then echo "Qt was installed anyway"; exit 1; fi
+
   flatpak:
     strategy:
       fail-fast: false
@@ -80,7 +102,7 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.11
       options: --privileged
     steps:
       - uses: actions/checkout@v5

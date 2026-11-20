@@ -21,7 +21,13 @@ pub const SETTINGS: &[(&str, &str)] = &[
 ];
 
 /// The keys the session file keeps: browsing state, never part of a settings backup.
-pub const SESSION: &[(&str, &str)] = &[("tabs", ""), ("last_page", "")];
+pub const SESSION: &[(&str, &str)] = &[
+    ("tabs", ""),
+    ("last_page", ""),
+    // The engine version the "out of date" notice was last shown for, and when (seconds since 1970).
+    ("engine_warned_version", ""),
+    ("engine_warned_at", "0"),
+];
 
 /// One `key=value` file with a fixed set of keys.
 #[derive(Debug, Clone)]
@@ -130,6 +136,10 @@ fn check(key: &str, value: &str) -> Option<String> {
         }
         // The tab list is checked again when it is read (crate::tabs::decode); here it only has to be text.
         "tabs" => (value.len() <= 64 * 1024).then(|| value.to_owned()),
+        "engine_warned_version" => {
+            (v.len() <= 32 && v.bytes().all(|b| b.is_ascii_digit() || b == b'.')).then(|| v.to_owned())
+        }
+        "engine_warned_at" => v.parse::<u64>().ok().map(|n| n.to_string()),
         _ => None,
     }
 }
@@ -186,6 +196,12 @@ mod tests {
         assert!(s.set("adblock", "false")?);
         assert!(!s.set("adblock", "maybe")?);
         assert_eq!(s.get("adblock"), "false");
+        let mut session = KeyFile::load(None, SESSION);
+        assert!(session.set("engine_warned_version", "132.0.6834.210")?);
+        assert!(!session.set("engine_warned_version", "132.0; rm")?);
+        assert!(session.set("engine_warned_at", "1795000000")?);
+        assert!(!session.set("engine_warned_at", "-5")?);
+        assert_eq!(session.get("engine_warned_at"), "1795000000");
         Ok(())
     }
 

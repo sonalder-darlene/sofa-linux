@@ -632,7 +632,30 @@ Kirigami.AbstractApplicationWindow {
             setupScreen.start();
         } else {
             show();
+            // As on Android: not on the first start, which already asks a question.
+            Qt.callLater(tellIfEngineOld);
         }
+    }
+
+    // Sofa can't update the web engine, only say once in a while that it is old (Session.takeEngineNotice).
+    function tellIfEngineOld() {
+        if (!Session.takeEngineNotice()) {
+            return;
+        }
+        const flatpak = Session.isFlatpak();
+        engineNotice.ask(qsTr("Sofa's web engine is out of date"),
+            (flatpak
+                ? qsTr("Sofa shows pages with Qt WebEngine, which comes with its Flatpak runtime. This one is quite old. Sofa can't update it, but updating your apps can.")
+                : qsTr("Sofa shows pages with Qt WebEngine, which comes with your system. This one is quite old. Sofa can't update it, but your system's updates can."))
+            + " " + qsTr("Older versions may be missing security fixes, and some sites may not work properly. You can keep browsing in the meantime."),
+            [{ text: qsTr("Keep browsing"), value: "keep" }, { text: qsTr("How to update"), value: "how" }],
+            value => {
+                if (value === "how") {
+                    Qt.callLater(() => engineNotice.tell(qsTr("How to update"), flatpak
+                        ? qsTr("Open Discover and install the updates it lists, or type \"flatpak update\" in a terminal. The web engine comes with the KDE runtime and is updated with it, or with a newer Sofa.")
+                        : qsTr("Install your system's updates, in Discover or with your distribution's package manager. If your distribution has no newer Qt WebEngine, Sofa's Flatpak brings a current one.")));
+                }
+            }, 0);
     }
 
     Shortcut {
@@ -1149,6 +1172,19 @@ Kirigami.AbstractApplicationWindow {
         }
     }
 
+    ChoiceDialog {
+        id: engineNotice
+        onClosed: Qt.callLater(() => {
+            if (engineNotice.visible) {
+                return;
+            }
+            if (root.screen === "page" && root.currentView) {
+                root.currentView.forceActiveFocus();
+            } else if (root.screen === "start") {
+                startPage.focusFirst();
+            }
+        })
+    }
     ChoiceDialog {
         id: linkMenu
         onClosed: if (root.screen === "page" && root.currentView) root.currentView.forceActiveFocus()

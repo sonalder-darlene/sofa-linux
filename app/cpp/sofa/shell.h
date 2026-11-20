@@ -30,6 +30,11 @@ bool hasWindow(const QQmlApplicationEngine &engine);
 // "Qt 6.x.y, QtWebEngine 6.x.y, Chromium a.b.c.d (security patches up to e.f.g.h)".
 QString engineVersions();
 
+// The Chromium version QtWebEngine is built from, the one its security fixes reach, and the Qt version.
+QString chromiumVersion();
+QString securityPatchVersion();
+QString qtVersion();
+
 // The Qt platform plugin in use, e.g. "wayland" or "xcb".
 QString platformName();
 

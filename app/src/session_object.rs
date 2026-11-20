@@ -83,6 +83,21 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "isWebUrl"]
         fn is_web_url(&self, url: &QString) -> bool;
+
+        /// The web engine for About, as JSON: `{chromium, fixes, qt}` (Chromium major version it is built from, the
+        /// major version its security fixes reach, Qt version).
+        #[qinvokable]
+        #[cxx_name = "engineInfo"]
+        fn engine_info(&self) -> QString;
+        /// Whether to tell the user now that the web engine is out of date (once per engine version, again after
+        /// about three months). True also records it as told.
+        #[qinvokable]
+        #[cxx_name = "takeEngineNotice"]
+        fn take_engine_notice(self: Pin<&mut Self>) -> bool;
+        /// Whether Sofa runs as a Flatpak (the engine then comes with the Flatpak runtime).
+        #[qinvokable]
+        #[cxx_name = "isFlatpak"]
+        fn is_flatpak(&self) -> bool;
     }
 
     extern "RustQt" {
@@ -123,7 +138,7 @@ pub mod qobject {
 }
 
 use std::pin::Pin;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
@@ -131,9 +146,9 @@ use serde_json::{Value, json};
 use sofa_core::address::{self, SearchEngine};
 use sofa_core::settings::{KeyFile, SESSION, SETTINGS};
 use sofa_core::start::{self, Choice};
-use sofa_core::{sites, tabs};
+use sofa_core::{engine_age, sites, tabs};
 
-use crate::paths;
+use crate::{paths, shell};
 
 /// State behind [`qobject::Session`].
 #[derive(Debug)]
@@ -277,6 +292,35 @@ impl qobject::Session {
 
     fn is_web_url(&self, url: &QString) -> bool {
         sites::is_web_url(&String::from(url))
+    }
+
+    fn engine_info(&self) -> QString {
+        let major = |v: QString| {
+            let v = String::from(&v);
+            engine_age::major(&v).map_or(v, |m| m.to_string())
+        };
+        text(&json!({
+            "chromium": major(shell::ffi::chromium_version()),
+            "fixes": major(shell::ffi::security_patch_version()),
+            "qt": String::from(&shell::ffi::qt_version()),
+        }))
+    }
+
+    fn take_engine_notice(self: Pin<&mut Self>) -> bool {
+        let version = String::from(&shell::ffi::security_patch_version());
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let mut this = self.rust_mut();
+        let warned_at = this.session.get("engine_warned_at").parse().unwrap_or(0);
+        if !engine_age::should_warn(&version, this.session.get("engine_warned_version"), warned_at, now) {
+            return false;
+        }
+        report(this.session.set("engine_warned_version", version.trim()));
+        report(this.session.set("engine_warned_at", &now.to_string()));
+        true
+    }
+
+    fn is_flatpak(&self) -> bool {
+        paths::is_flatpak()
     }
 }
 

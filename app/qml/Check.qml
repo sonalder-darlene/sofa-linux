@@ -47,15 +47,15 @@ Window {
         })();
     `
 
-    WebEngineProfile {
+    // No storage name: an off-the-record profile, nothing kept on disk.
+    WebEngineProfilePrototype {
         id: throwaway
-        offTheRecord: true
     }
 
     WebEngineView {
         id: view
         anchors.fill: parent
-        profile: throwaway
+        profile: throwaway.instance()
         // EME needs a secure context; the page is local and empty, the origin only names it.
         Component.onCompleted: loadHtml("<!doctype html><title>check</title>", "https://check.invalid/")
         onLoadingChanged: info => {

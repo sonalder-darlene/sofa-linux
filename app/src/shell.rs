@@ -44,6 +44,21 @@ pub mod ffi {
         #[cxx_name = "engineVersions"]
         fn engine_versions() -> QString;
 
+        /// The Chromium version QtWebEngine is built from, such as `140.0.7339.264`.
+        #[namespace = "sofa"]
+        #[cxx_name = "chromiumVersion"]
+        fn chromium_version() -> QString;
+
+        /// The Chromium version QtWebEngine's security fixes reach, such as `157.0.8103.50`.
+        #[namespace = "sofa"]
+        #[cxx_name = "securityPatchVersion"]
+        fn security_patch_version() -> QString;
+
+        /// The Qt version Sofa runs on.
+        #[namespace = "sofa"]
+        #[cxx_name = "qtVersion"]
+        fn qt_version() -> QString;
+
         /// The Qt platform plugin in use.
         #[namespace = "sofa"]
         #[cxx_name = "platformName"]

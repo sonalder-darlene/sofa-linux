@@ -11,6 +11,8 @@ BUILD_DIR="$ROOT/build"
 APP_ID="$(tr -d '[:space:]' < "$ROOT/APP_ID")"
 BINARY=sofa-tv-browser
 FLATPAK_MANIFEST="$ROOT/packaging/flatpak/manifest.yml"
+# The oldest Qt Sofa builds on; keep in step with SOFA_QT_MIN in CMakeLists.txt.
+QT_MIN=6.11
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
@@ -60,16 +62,44 @@ deps_packages() {
     case "$1" in
         arch) echo "base-devel cmake ninja rust lld sqlite qt6-base qt6-declarative qt6-webengine qt6-svg qt6-wayland kirigami qqc2-desktop-style" ;;
         fedora) echo "cmake ninja-build gcc-c++ cargo rust lld pkgconf-pkg-config sqlite-devel qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtwebengine-devel qt6-qtsvg-devel qt6-qtwayland kf6-kirigami kf6-qqc2-desktop-style" ;;
-        debian)
-            # Debian 13's own Rust (1.85) is older than Brave's ad-block engine needs; Debian keeps a newer one for
-            # its browsers, rustc-web, which installs as the usual rustc and cargo.
-            local rust="cargo rustc"
-            apt-cache show rustc-web > /dev/null 2>&1 && rust="cargo-web rustc-web"
-            echo "build-essential ca-certificates cmake ninja-build $rust lld pkgconf libsqlite3-dev qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-webengine-dev qt6-svg-dev qt6-svg-plugins qt6-wayland qml6-module-org-kde-kirigami qml6-module-qtwebengine qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-window qml6-module-qtquick-templates qml6-module-qtqml-workerscript qml6-module-qtquick-dialogs qml6-module-org-kde-desktop"
-            ;;
+        debian) echo "build-essential ca-certificates cmake ninja-build cargo rustc lld pkgconf libsqlite3-dev qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-webengine-dev qt6-svg-dev qt6-svg-plugins qt6-wayland qml6-module-org-kde-kirigami qml6-module-qtwebengine qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-window qml6-module-qtquick-templates qml6-module-qtqml-workerscript qml6-module-qtquick-dialogs qml6-module-org-kde-desktop" ;;
         opensuse) echo "cmake ninja gcc-c++ cargo lld pkgconf sqlite3-devel qt6-base-devel qt6-declarative-devel qt6-webenginequick-devel qt6-webengine-imports qt6-svg-devel qt6-wayland kf6-kirigami-imports kf6-qqc2-desktop-style" ;;
         *) return 1 ;;
     esac
+}
+
+# The command that brings distribution $1's package lists up to date, so the Qt it offers can be read; none where the
+# package manager does it by itself.
+deps_refresh_command() {
+    local sudo="sudo "
+    [[ $EUID -eq 0 ]] && sudo=""
+    case "$1" in
+        arch) echo "${sudo}pacman -Sy" ;;
+        debian) echo "${sudo}apt-get update" ;;
+        opensuse) echo "${sudo}zypper --non-interactive refresh" ;;
+    esac
+}
+
+# The Qt version distribution $1 offers, installed or not, such as 6.11.2; nothing when it can't be told.
+distro_qt_version() {
+    local v=""
+    case "$1" in
+        arch)
+            v="$(pacman -Si qt6-base 2>/dev/null | sed -n 's/^Version *: *//p' | head -1)"
+            [[ -n $v ]] || v="$(pacman -Q qt6-base 2>/dev/null | awk '{print $2}')"
+            ;;
+        fedora) v="$(dnf -q repoquery --latest-limit 1 --qf '%{version}\n' qt6-qtbase-devel 2>/dev/null | head -1)" ;;
+        debian) v="$(apt-cache policy qt6-base-dev 2>/dev/null | sed -n 's/^ *Candidate: *//p' | head -1)" ;;
+        opensuse) v="$(zypper -q --non-interactive info qt6-base-devel 2>/dev/null | sed -n 's/^Version *: *//p' | head -1)" ;;
+    esac
+    v="${v#*:}"      # an epoch ("1:")
+    v="${v%%[-+~]*}" # the release and Debian's "+dfsg"
+    if [[ $v =~ ^[0-9]+\.[0-9]+ ]]; then echo "$v"; fi
+}
+
+# Whether version $1 is $2 or newer.
+version_at_least() {
+    [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" == "$2" ]]
 }
 
 # The install command for distribution $1; with $2 = yes, one that asks nothing (for CI and containers).
@@ -110,7 +140,19 @@ cmd_deps() {
             ;;
     esac
     local cmd
-    cmd="$(deps_command "$os" "$yes")" || die "I don't know this distribution's package names. You need: CMake, Ninja, a C++ compiler, Rust (cargo), lld, pkg-config, SQLite, Qt 6.8 or newer (Base, Declarative, WebEngine, Svg, Wayland) and KDE's Kirigami. Or use the Flatpak: ./sofa.sh flatpak"
+    cmd="$(deps_command "$os" "$yes")" || die "I don't know this distribution's package names. You need: CMake, Ninja, a C++ compiler, Rust (cargo), lld, pkg-config, SQLite, Qt $QT_MIN or newer (Base, Declarative, WebEngine, Svg, Wayland) and KDE's Kirigami. Or use the Flatpak: ./sofa.sh flatpak"
+    if $install; then
+        local refresh; refresh="$(deps_refresh_command "$os")"
+        if [[ -n $refresh ]]; then
+            say "Reading the package lists: $refresh"
+            eval "$refresh" > /dev/null
+        fi
+    fi
+    local qt; qt="$(distro_qt_version "$os")"
+    if [[ -n $qt ]] && ! version_at_least "$qt" "$QT_MIN"; then
+        die "This distribution offers Qt $qt, and Sofa needs Qt $QT_MIN or newer: it is what Plasma Bigscreen and KDE's TV components build on, and older web engines miss many security fixes. Install Sofa as a Flatpak instead, which brings a current Qt and web engine: ./sofa.sh flatpak (or, with Nix: nix run .)"
+    fi
+    [[ -n $qt ]] || warn "I can't tell which Qt this distribution offers. Sofa needs Qt $QT_MIN or newer; if it is older, the build stops and says so."
     if $install; then
         say "Installing the build dependencies:"
         echo "  $cmd"

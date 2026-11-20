@@ -48,7 +48,7 @@ cd sofa-linux
 
 | Command | What it does |
 |---|---|
-| `./sofa.sh deps [--install] [--yes]` | The build packages for Arch, Fedora, Debian/Ubuntu or openSUSE (NixOS: use the flake) |
+| `./sofa.sh deps [--install] [--yes]` | The build packages for Arch, Fedora, Debian/Ubuntu or openSUSE, once it has checked their Qt (NixOS: use the flake) |
 | `./sofa.sh build [--debug]` | Builds into `build/` |
 | `./sofa.sh run [--fresh] [ADDRESS]` | Runs the build without installing; `--fresh` uses a throwaway profile |
 | `./sofa.sh install [--system]` | Installs into `~/.local`, or `/usr/local` with `--system` (uses sudo) |
@@ -60,8 +60,13 @@ cd sofa-linux
 **With Nix:** `nix run github:sonalder-darlene/sofa-linux`, or `nix develop` for a shell with everything the build
 needs.
 
-**Needs:** Qt 6.8 or newer with Qt WebEngine, KDE's Kirigami, SQLite, Rust, CMake, pkg-config and lld. The web engine is the one your
-distribution (or the Flatpak runtime) ships and keeps patched; Sofa never bundles its own.
+**Needs:** Qt 6.11 or newer with Qt WebEngine, KDE's Kirigami, SQLite, Rust, CMake, pkg-config and lld. That is
+Arch, openSUSE Tumbleweed, Fedora 44 or newer and Debian testing today. On a distribution with an older Qt (Debian 13,
+Ubuntu 26.04), `./sofa.sh deps` says so: use the Flatpak there, or Nix.
+
+**The web engine** is the one your distribution (or the Flatpak runtime) ships and keeps patched; Sofa never bundles
+its own. Settings → About Sofa shows how far its security fixes reach, and Sofa tells you, once in a while, when they
+are more than about a year behind Chrome.
 
 **Video formats** depend on how your distribution built Qt WebEngine: `./sofa.sh check` tells you what plays. Paid
 streaming services that need Widevine DRM may not play, or play only in low resolution.

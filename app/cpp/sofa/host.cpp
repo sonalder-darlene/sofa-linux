@@ -109,9 +109,8 @@ void Host::setTyping(bool on)
 QObject *Host::newPrivateProfile()
 {
     // A profile without a storage name keeps nothing on disk: cookies, storage and cache live in memory and go
-    // with the profile.
-    auto *profile = new QQuickWebEngineProfile(this);
-    profile->setOffTheRecord(true);
+    // with the profile. (Made through the named constructor: since Qt 6.9 the other one is on its way out.)
+    auto *profile = new QQuickWebEngineProfile(QString(), this);
     profile->setUrlRequestInterceptor(m_interceptor);
     addPageScript(profile);
     return profile;
@@ -125,8 +124,8 @@ void Host::addPageScript(QQuickWebEngineProfile *profile) const
     script.setInjectionPoint(QWebEngineScript::DocumentCreation);
     script.setWorldId(QWebEngineScript::ApplicationWorld);
     script.setRunsOnSubFrames(true);
-    // The profile's script list has no public C++ header, only its QML API, so insert() is called through that.
-    // (Binding a view's userScripts in QML instead crashes Qt 6.8 while the view is being made.)
+    // The profile's script list has no public C++ header, only its QML API, so insert() is called through that. Once
+    // per profile rather than per view in QML: every view and window of the profile then has it, catchers included.
     auto *scripts = profile->property("userScripts").value<QObject *>();
     if (!scripts || !QMetaObject::invokeMethod(scripts, "insert", Q_ARG(QWebEngineScript, script))) {
         qWarning("The page script could not be added: the pop-up rules won't know which link was pressed.");

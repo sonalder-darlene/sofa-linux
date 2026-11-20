@@ -44,3 +44,8 @@ pub fn downloads_dir() -> Option<PathBuf> {
     });
     Some(from_file.unwrap_or_else(|| home.join("Downloads")))
 }
+
+/// Whether Sofa runs inside a Flatpak.
+pub fn is_flatpak() -> bool {
+    std::path::Path::new("/.flatpak-info").exists()
+}

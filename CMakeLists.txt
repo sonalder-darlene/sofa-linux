@@ -22,7 +22,13 @@ option(SOFA_CARGO_OFFLINE "Build only from vendored or already downloaded crates
 include(GNUInstallDirs)
 
 # Fail here, with package names, rather than deep inside Cargo.
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui DBus Qml Quick WebEngineQuick Svg)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui DBus Qml Quick WebEngineQuick Svg)
+# Qt 6.11 is what Plasma Bigscreen and KDE's TV components build on; older web engines also miss a year of fixes.
+set(SOFA_QT_MIN 6.11)
+if(Qt6_VERSION VERSION_LESS SOFA_QT_MIN)
+    message(FATAL_ERROR "Sofa needs Qt ${SOFA_QT_MIN} or newer; this system has Qt ${Qt6_VERSION}. "
+        "Use the Flatpak instead (./sofa.sh flatpak), which brings a current Qt and web engine, or Nix (nix run .).")
+endif()
 find_program(CARGO cargo REQUIRED)
 get_target_property(_qmake Qt6::qmake IMPORTED_LOCATION)
 if(DEFINED ENV{QMAKE})

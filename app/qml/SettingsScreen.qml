@@ -55,8 +55,12 @@ FocusScope {
             Session.setValue("adblock", Session.value("adblock") === "true" ? "false" : "true");
             refresh();
         } else if (row.key === "about") {
+            const engine = JSON.parse(Session.engineInfo());
             choice.tell(qsTr("Sofa %1").arg(Core.version),
-                        qsTr("A TV web browser for KDE Plasma Bigscreen. Free software under the GNU GPL version 3. Sofa has no servers and no accounts of its own, and sends nothing about you anywhere. Bookmarks, history and settings stay on this computer."));
+                        qsTr("A TV web browser for KDE Plasma Bigscreen. Free software under the GNU GPL version 3. Sofa has no servers and no accounts of its own, and sends nothing about you anywhere. Bookmarks, history and settings stay on this computer.")
+                        + "\n\n"
+                        + qsTr("Web engine: Qt WebEngine on Qt %1, built from Chromium %2, with Chromium's security fixes up to version %3.")
+                              .arg(engine.qt).arg(engine.chromium).arg(engine.fixes));
         }
     }
 

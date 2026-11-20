@@ -9,6 +9,7 @@ pub mod ad_allowlist;
 pub mod address;
 pub mod ads;
 pub mod bookmark_file;
+pub mod engine_age;
 pub mod folders;
 pub mod library;
 pub mod popups;
