@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Settings: the search engine, what Sofa opens at start, and what this copy is. More settings come with the
-// features they belong to.
+// Settings: the search engine, what Sofa opens at start, ad blocking, and what this copy is. More settings come with
+// the features they belong to.
 
 import QtQuick
 import QtQuick.Controls as QQC2
@@ -39,6 +39,9 @@ FocusScope {
             { key: "open", title: qsTr("Open at start"), icon: "go-home",
               value: open === "page" ? (page !== "" ? Session.label(page) : qsTr("A web page"))
                    : open === "last" ? qsTr("Where I left off") : qsTr("Start page") },
+            { key: "adblock", title: qsTr("Block ads and trackers"),
+              icon: Session.value("adblock") === "true" ? "security-high" : "security-low",
+              value: Session.value("adblock") === "true" ? qsTr("On") : qsTr("Off") },
             { key: "about", title: qsTr("About Sofa"), value: qsTr("Version %1").arg(Core.version), icon: "help-about" }
         ];
     }
@@ -48,6 +51,9 @@ FocusScope {
             screen.chooseEngine();
         } else if (row.key === "open") {
             askOpenAtStart();
+        } else if (row.key === "adblock") {
+            Session.setValue("adblock", Session.value("adblock") === "true" ? "false" : "true");
+            refresh();
         } else if (row.key === "about") {
             choice.tell(qsTr("Sofa %1").arg(Core.version),
                         qsTr("A TV web browser for KDE Plasma Bigscreen. Free software under the GNU GPL version 3. Sofa has no servers and no accounts of its own, and sends nothing about you anywhere. Bookmarks, history and settings stay on this computer."));

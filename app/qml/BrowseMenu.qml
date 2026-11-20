@@ -20,6 +20,9 @@ FocusScope {
     property bool bookmarked: false
     property bool pointerOn: true
     property bool privateMode: false
+    // The page in sight is a web page, and ad blocking is on for its site.
+    property bool webPage: false
+    property bool adBlockOn: true
     property real zoom: 1
 
     signal action(string name)
@@ -272,6 +275,15 @@ FocusScope {
                 MenuButton { objectName: "pin"; iconName: "list-add"; text: qsTr("Add to start page") }
                 MenuButton { objectName: "bookmarks"; iconName: "bookmarks"; text: qsTr("Bookmarks") }
                 MenuButton { objectName: "history"; iconName: "view-history"; text: qsTr("History") }
+                MenuButton {
+                    objectName: "adblock"
+                    iconName: menu.adBlockOn ? "security-high" : "security-low"
+                    // The state shows in the icon and the tint: "Ad block: off" doesn't fit under the button.
+                    text: qsTr("Ad block")
+                    Accessible.name: menu.adBlockOn ? qsTr("Ad blocking on for this site") : qsTr("Ad blocking off for this site")
+                    checked: menu.adBlockOn
+                    available: menu.webPage
+                }
                 MenuButton {
                     objectName: "pointer"
                     iconName: "input-mouse"

@@ -314,6 +314,8 @@ Kirigami.AbstractApplicationWindow {
             }
         }
         privateMode = true;
+        // Choices made in private browsing are kept in memory only, and start afresh with each session.
+        Session.forgetPrivateChoices();
         const id = addTab("", -1);
         currentId = -1;
         selectTab(id);
@@ -335,6 +337,7 @@ Kirigami.AbstractApplicationWindow {
         endProfile.restart();
         privateProfile = null;
         privateMode = false;
+        Session.forgetPrivateChoices();
         currentId = -1;
         const back = normalOrder.current();
         selectTab(back >= 0 ? back : addTab("", -1));
@@ -392,6 +395,8 @@ Kirigami.AbstractApplicationWindow {
         }
         pointer.reset();
         menu.bookmarked = Library.isBookmarked(currentUrl);
+        menu.webPage = Session.isWebUrl(currentUrl);
+        menu.adBlockOn = Session.value("adblock") === "true" && !Session.adBlockOffHere(currentUrl);
         menuShown = true;
         menu.show();
     }
@@ -464,6 +469,7 @@ Kirigami.AbstractApplicationWindow {
             openScreen("history");
             historyScreen.start();
             break;
+        case "adblock": toggleAdBlockHere(); break;
         case "pointer":
             pointerOn = !pointerOn;
             notify(pointerOn ? qsTr("Pointer on: the arrows move it") : qsTr("Pointer off: the arrows go to the page"));
@@ -472,6 +478,30 @@ Kirigami.AbstractApplicationWindow {
         case "zoomIn": if (view) view.zoomFactor = Math.min(5, Math.round((view.zoomFactor + 0.1) * 10) / 10); break;
         case "zoomReset": if (view) view.zoomFactor = 1; break;
         case "settings": openSettings(); break;
+        }
+    }
+
+    // Ad blocking off or back on for the site in sight, then the page loads again under the new rule, past the cache:
+    // a plain reload would show the ads it already has from memory. In private browsing the switch lasts until
+    // private browsing ends.
+    function toggleAdBlockHere() {
+        if (!Session.isWebUrl(currentUrl)) {
+            return;
+        }
+        if (Session.value("adblock") !== "true") {
+            notify(qsTr("Ad blocking is turned off in Settings"));
+            return;
+        }
+        const off = !Session.adBlockOffHere(currentUrl);
+        if (!Session.setAdBlockOffHere(currentUrl, off, privateMode)) {
+            return;
+        }
+        notify(!off ? qsTr("Ad blocking turned on for this site")
+               : privateMode ? qsTr("Ad blocking turned off for this site until you leave private browsing")
+               : qsTr("Ad blocking turned off for this site"));
+        closeMenu();
+        if (currentView) {
+            currentView.reloadAndBypassCache();
         }
     }
 

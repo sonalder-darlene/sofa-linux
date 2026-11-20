@@ -21,7 +21,7 @@ jobs:
         run: |
           nix develop --command cargo fmt --all --check
           nix develop --command cargo clippy --workspace --all-targets --locked -- -D warnings
-          nix develop --command shellcheck sofa.sh
+          nix develop --command shellcheck sofa.sh data/filters/update.sh
 
   nix:
     runs-on: ubuntu-24.04

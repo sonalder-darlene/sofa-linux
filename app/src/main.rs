@@ -8,9 +8,12 @@ mod session_object;
 mod shell;
 
 use std::process::ExitCode;
+use std::sync::{Arc, OnceLock};
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
+use sofa_core::ad_allowlist::AdAllowlist;
 use sofa_core::address::{self, SearchEngine};
+use sofa_core::ads::AdBlocker;
 use sofa_core::requests;
 use sofa_core::settings::{KeyFile, SETTINGS};
 
@@ -22,6 +25,8 @@ pub const APP_ID: &str = env!("SOFA_APP_ID");
 const PROFILE_NAME: &str = "default";
 const MAIN_QML: &str = "qrc:/qt/qml/Sofa/qml/Main.qml";
 const CHECK_QML: &str = "qrc:/qt/qml/Sofa/qml/Check.qml";
+/// The sites where ad blocking is off, in the config folder beside `settings.conf`.
+const AD_ALLOWLIST_FILE: &str = "ad-blocking-off.txt";
 
 fn main() -> ExitCode {
     let options = match Options::parse(std::env::args().skip(1)) {
@@ -84,6 +89,7 @@ fn run(options: &Options) -> ExitCode {
                 // The Sofa already running opens it.
                 return ExitCode::SUCCESS;
             }
+            start_ad_blocker();
             MAIN_QML
         }
     };
@@ -113,12 +119,35 @@ fn chosen_engine() -> &'static SearchEngine {
     address::engine(settings.get("search_engine")).unwrap_or(&SearchEngine::DUCKDUCKGO)
 }
 
-/// The request rules. Only a development aid exists so far: `SOFA_BLOCK_HOSTS`, a comma-separated host list,
-/// to see the interceptor at work. Ad blocking and site filters come later through the same policy.
+/// The request rules: the ad blocker, and `SOFA_BLOCK_HOSTS`, a comma-separated host list for development, to see
+/// the interceptor block whole hosts (pages included). Site filters come later through the same policy.
 fn request_policy() -> requests::RequestPolicy {
-    match std::env::var("SOFA_BLOCK_HOSTS") {
-        Ok(list) => requests::RequestPolicy::with_blocked_hosts(list.split(',')),
-        Err(_) => requests::RequestPolicy::default(),
+    let hosts = std::env::var("SOFA_BLOCK_HOSTS").unwrap_or_default();
+    requests::RequestPolicy::with_blocked_hosts(hosts.split(',')).with_ad_blocker(Arc::clone(ad_blocker()))
+}
+
+/// The ad blocker every profile's requests go through (Settings → Block ads and trackers).
+pub fn ad_blocker() -> &'static Arc<AdBlocker> {
+    static ADS: OnceLock<Arc<AdBlocker>> = OnceLock::new();
+    ADS.get_or_init(|| Arc::new(AdBlocker::new(true)))
+}
+
+/// Switches the ad blocker as Settings say, reads the sites where it is switched off, and compiles its lists on a
+/// worker thread, so the window doesn't wait: nothing is blocked during that tenth of a second.
+fn start_ad_blocker() {
+    let config = paths::config_dir();
+    let settings = KeyFile::load(config.as_ref().map(|d| d.join("settings.conf")), SETTINGS);
+    let ads = ad_blocker();
+    ads.set_enabled(settings.get("adblock") == "true");
+    ads.set_allowlist(AdAllowlist::load(config.map(|d| d.join(AD_ALLOWLIST_FILE))));
+    let ads = Arc::clone(ads);
+    let spawned = std::thread::Builder::new().name("sofa-filters".to_owned()).spawn(move || {
+        if let Err(error) = ads.load_bundled() {
+            eprintln!("sofa-tv-browser: the built-in filter lists could not be read ({error}); ads are not blocked");
+        }
+    });
+    if let Err(error) = spawned {
+        eprintln!("sofa-tv-browser: the filter lists could not be loaded ({error}); ads are not blocked");
     }
 }
 

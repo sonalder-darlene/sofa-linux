@@ -17,6 +17,7 @@ pub const SETTINGS: &[(&str, &str)] = &[
     ("search_engine", ""),
     ("open_at_start", "home"),
     ("start_page", ""),
+    ("adblock", "true"),
 ];
 
 /// The keys the session file keeps: browsing state, never part of a settings backup.
@@ -118,6 +119,7 @@ fn check(key: &str, value: &str) -> Option<String> {
     let v = value.trim();
     match key {
         "search_engine" => (v.is_empty() || address::engine(v).is_some()).then(|| v.to_owned()),
+        "adblock" => matches!(v, "true" | "false").then(|| v.to_owned()),
         "open_at_start" => Some(Choice::from_id(v).id().to_owned()),
         "start_page" | "last_page" => {
             if v.is_empty() {
@@ -180,6 +182,10 @@ mod tests {
         assert_eq!(s.get("start_page"), "https://example.com/tv");
         assert!(!s.set("start_page", "javascript:alert(1)")?);
         assert!(!s.set("tabs", "x")?);
+        assert_eq!(s.get("adblock"), "true");
+        assert!(s.set("adblock", "false")?);
+        assert!(!s.set("adblock", "maybe")?);
+        assert_eq!(s.get("adblock"), "false");
         Ok(())
     }
 

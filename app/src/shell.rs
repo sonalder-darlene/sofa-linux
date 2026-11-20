@@ -48,15 +48,35 @@ pub mod ffi {
         fn platform_name() -> QString;
     }
 
+    /// What a request is for. The C++ side maps Qt's resource types onto these.
+    #[namespace = "sofa"]
+    #[derive(Debug)]
+    enum ResourceKind {
+        Page,
+        Frame,
+        Stylesheet,
+        Script,
+        Image,
+        Font,
+        Media,
+        Object,
+        Xhr,
+        Ping,
+        WebSocket,
+        CspReport,
+        Other,
+    }
+
     extern "Rust" {
         /// The request rules, owned by the C++ interceptor.
         #[namespace = "sofa"]
         type RequestPolicy;
 
-        /// Whether the request for `url` (the encoded address) must not be sent.
+        /// Whether the request for `url` (the encoded address), made for the page `first_party` (encoded, empty
+        /// when there is none), must not be sent.
         #[namespace = "sofa"]
         #[cxx_name = "shouldBlock"]
-        fn should_block(self: &RequestPolicy, url: &[u8]) -> bool;
+        fn should_block(self: &RequestPolicy, url: &[u8], first_party: &[u8], kind: ResourceKind) -> bool;
     }
 }
 
@@ -70,8 +90,32 @@ impl RequestPolicy {
         Box::new(Self(policy))
     }
 
-    fn should_block(&self, url: &[u8]) -> bool {
+    fn should_block(&self, url: &[u8], first_party: &[u8], kind: ffi::ResourceKind) -> bool {
         // Qt hands over the encoded form, which is ASCII. Anything else is let through for the engine to refuse.
-        std::str::from_utf8(url).is_ok_and(|url| self.0.should_block(url))
+        let Ok(url) = std::str::from_utf8(url) else { return false };
+        let first_party = std::str::from_utf8(first_party).unwrap_or_default();
+        self.0.should_block(&requests::Request { url, first_party, kind: kind.into() })
+    }
+}
+
+impl From<ffi::ResourceKind> for requests::ResourceKind {
+    fn from(kind: ffi::ResourceKind) -> Self {
+        use ffi::ResourceKind as K;
+        match kind {
+            K::Page => Self::Page,
+            K::Frame => Self::Frame,
+            K::Stylesheet => Self::Stylesheet,
+            K::Script => Self::Script,
+            K::Image => Self::Image,
+            K::Font => Self::Font,
+            K::Media => Self::Media,
+            K::Object => Self::Object,
+            K::Xhr => Self::Xhr,
+            K::Ping => Self::Ping,
+            K::WebSocket => Self::WebSocket,
+            K::CspReport => Self::CspReport,
+            // A cxx enum can hold any number: one the C++ side doesn't name counts as "anything else".
+            _ => Self::Other,
+        }
     }
 }

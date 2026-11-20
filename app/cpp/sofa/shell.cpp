@@ -18,6 +18,52 @@ namespace sofa {
 
 namespace {
 
+rust::Slice<const std::uint8_t> bytesOf(const QByteArray &data)
+{
+    return {reinterpret_cast<const std::uint8_t *>(data.constData()), static_cast<std::size_t>(data.size())};
+}
+
+// What a request is for, in the Rust core's terms.
+ResourceKind kindOf(QWebEngineUrlRequestInfo::ResourceType type)
+{
+    using Info = QWebEngineUrlRequestInfo;
+    switch (type) {
+    case Info::ResourceTypeMainFrame:
+    case Info::ResourceTypeNavigationPreloadMainFrame:
+        return ResourceKind::Page;
+    case Info::ResourceTypeSubFrame:
+    case Info::ResourceTypeNavigationPreloadSubFrame:
+        return ResourceKind::Frame;
+    case Info::ResourceTypeStylesheet:
+        return ResourceKind::Stylesheet;
+    case Info::ResourceTypeScript:
+    case Info::ResourceTypeWorker:
+    case Info::ResourceTypeSharedWorker:
+    case Info::ResourceTypeServiceWorker:
+        return ResourceKind::Script;
+    case Info::ResourceTypeImage:
+    case Info::ResourceTypeFavicon:
+        return ResourceKind::Image;
+    case Info::ResourceTypeFontResource:
+        return ResourceKind::Font;
+    case Info::ResourceTypeMedia:
+        return ResourceKind::Media;
+    case Info::ResourceTypeObject:
+    case Info::ResourceTypePluginResource:
+        return ResourceKind::Object;
+    case Info::ResourceTypeXhr:
+        return ResourceKind::Xhr;
+    case Info::ResourceTypePing:
+        return ResourceKind::Ping;
+    case Info::ResourceTypeWebSocket:
+        return ResourceKind::WebSocket;
+    case Info::ResourceTypeCspReport:
+        return ResourceKind::CspReport;
+    default: // prefetches, "other" subresources, and kinds newer Qt versions add
+        return ResourceKind::Other;
+    }
+}
+
 // Asks the Rust policy about every request the engine is about to send.
 class RequestInterceptor final : public QWebEngineUrlRequestInterceptor
 {
@@ -31,9 +77,8 @@ public:
     void interceptRequest(QWebEngineUrlRequestInfo &info) override
     {
         const QByteArray url = info.requestUrl().toEncoded();
-        const rust::Slice<const std::uint8_t> bytes(reinterpret_cast<const std::uint8_t *>(url.constData()),
-                                                    static_cast<std::size_t>(url.size()));
-        if (m_policy->shouldBlock(bytes)) {
+        const QByteArray firstParty = info.firstPartyUrl().toEncoded();
+        if (m_policy->shouldBlock(bytesOf(url), bytesOf(firstParty), kindOf(info.resourceType()))) {
             info.block(true);
         }
     }

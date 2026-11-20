@@ -20,9 +20,15 @@ in a new code base made for Linux.
 - **Private browsing** in a session of its own: nothing goes to History, and its cookies and site data are gone when
   you leave it.
 - **Open at start:** the start page, a page you choose, or where you left off.
+- **Ads and trackers blocked** (Settings → Block ads and trackers, on from the start): the pictures, scripts and
+  frames of about 150,000 ad, tracker and pop-up domains are never loaded, in private browsing too. Sofa carries the
+  lists itself ([StevenBlack's hosts](https://github.com/StevenBlack/hosts) and
+  [HaGeZi's pop-up ad domains](https://github.com/hagezi/dns-blocklists)), so blocking needs no download, and checks
+  each request with [Brave's ad-block engine](https://github.com/brave/adblock-rust). A site that doesn't work
+  with it can be let through from Sofa's menu (Ad block); in private browsing that lasts until you leave it.
 - Pages get no camera, microphone, location or notifications.
 
-Ad blocking, site filters and Sofa's own video player come next.
+Pop-up rules, more filter lists, site filters and Sofa's own video player come next.
 
 ## Install from the source
 
@@ -90,7 +96,7 @@ Rust crates so the build needs no network. It isn't on Flathub yet.
 
 - **QML and Kirigami** for the screens, so Sofa looks and behaves like a KDE app.
 - **A Rust core** (`core/`) for everything that reads untrusted input (what you type, the addresses pages ask for,
-  bookmarks files, and later filter lists and backups) and everything Sofa keeps (bookmarks, history, tabs,
+  bookmarks files, filter lists, and later backups) and everything Sofa keeps (bookmarks, history, tabs,
   settings). It has no Qt in it and is tested on its own.
 - **[CXX-Qt](https://github.com/KDAB/cxx-qt)** (`app/src/`) joins the two, and a **thin C++ layer**
   (`app/cpp/`) does only what Qt WebEngine needs done in C++: it asks the Rust core about every request and decides
@@ -101,7 +107,8 @@ The app ID in [`APP_ID`](APP_ID) is a placeholder until Sofa has its own domain;
 the Wayland app ID and the data folder (`~/.local/share/<app ID>`).
 
 For development, `SOFA_BLOCK_HOSTS=example.com,example.org sofa-tv-browser` blocks those hosts and everything
-under them, to see the request filter at work.
+under them, to see the request filter at work. The built-in filter lists are in [`data/filters/`](data/filters/);
+`data/filters/update.sh` refreshes them before a release.
 
 Sofa is made with the help of an AI assistant (Claude), as the Android app is. Every change is built and tested
 before it goes in.

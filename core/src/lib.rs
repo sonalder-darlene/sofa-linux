@@ -5,7 +5,9 @@
 
 #![warn(missing_docs)]
 
+pub mod ad_allowlist;
 pub mod address;
+pub mod ads;
 pub mod bookmark_file;
 pub mod folders;
 pub mod library;

@@ -5,8 +5,8 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-# Debian 13 ships Rust 1.85; nothing newer is needed yet.
-rust-version = "1.85"
+# adblock needs 1.87 (`is_multiple_of`). Debian 13 gets a newer Rust than its own 1.85 from rustc-web (sofa.sh deps).
+rust-version = "1.87"
 license = "GPL-3.0-only"
 publish = false
 
@@ -16,6 +16,10 @@ url = "2.5"
 # The system's SQLite, not a bundled copy: distributions keep it patched.
 rusqlite = "0.37"
 serde_json = "1"
+# Brave's ad-blocking engine. Without its "single-thread" feature, so one engine serves every thread.
+adblock = { version = "0.13.6", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
+# Reads the gzip-compressed filter lists built into Sofa (pure Rust, no zlib needed).
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

@@ -16,13 +16,26 @@ pub mod qobject {
         #[qml_singleton]
         type Session = super::SessionRust;
 
-        /// A setting (`search_engine`, `open_at_start`, `start_page`); "" for an unknown key.
+        /// A setting (`search_engine`, `open_at_start`, `start_page`, `adblock`); "" for an unknown key.
         #[qinvokable]
         fn value(&self, key: &QString) -> QString;
         /// Sets a setting after checking it; false when the value doesn't fit.
         #[qinvokable]
         #[cxx_name = "setValue"]
         fn set_value(self: Pin<&mut Self>, key: &QString, value: &QString) -> bool;
+        /// Whether the site of the page at `url` is switched off from ad blocking (Sofa's menu, "Ad block").
+        #[qinvokable]
+        #[cxx_name = "adBlockOffHere"]
+        fn ad_block_off_here(&self, url: &QString) -> bool;
+        /// Switches ad blocking off (`off`) or back on for the site of the page at `url`, until private browsing
+        /// ends when `in_private`. False for a page without a site.
+        #[qinvokable]
+        #[cxx_name = "setAdBlockOffHere"]
+        fn set_ad_block_off_here(&self, url: &QString, off: bool, in_private: bool) -> bool;
+        /// Private browsing began or ended: the choices made in it are forgotten.
+        #[qinvokable]
+        #[cxx_name = "forgetPrivateChoices"]
+        fn forget_private_choices(&self);
         /// `[{id, name, paid}]`, A to Z.
         #[qinvokable]
         fn engines(&self) -> QString;
@@ -166,10 +179,28 @@ impl qobject::Session {
         let mut this = self.rust_mut();
         let taken = report(this.settings.set(&key, &value));
         // "Where I left off" forgets its page when another choice is made.
+        if taken && key == "adblock" {
+            crate::ad_blocker().set_enabled(this.settings.get("adblock") == "true");
+        }
         if taken && key == "open_at_start" && Choice::from_id(&value) != Choice::LastPage {
             report(this.session.set("last_page", ""));
         }
         taken
+    }
+
+    fn ad_block_off_here(&self, url: &QString) -> bool {
+        crate::ad_blocker().allows_site(&String::from(url))
+    }
+
+    fn set_ad_block_off_here(&self, url: &QString, off: bool, in_private: bool) -> bool {
+        crate::ad_blocker().allow_site(&String::from(url), off, in_private).unwrap_or_else(|e| {
+            eprintln!("sofa-tv-browser: the sites without ad blocking could not be written: {e}");
+            true
+        })
+    }
+
+    fn forget_private_choices(&self) {
+        crate::ad_blocker().forget_private();
     }
 
     fn engines(&self) -> QString {
