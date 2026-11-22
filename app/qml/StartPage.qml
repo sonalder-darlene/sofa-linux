@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// The start page: a top bar (the search pill and the main buttons) over rows of cards: Quick access (the user's own
-// tiles), Most visited (from History, not in private browsing) and Bookmarks (the top level's folders, then its
-// newest bookmarks, and "All bookmarks" when they don't all fit). Everything comes from this computer.
+// The start page, on KDE's TV rails: a top bar (the search button and the main buttons) over rows of cards: Quick
+// access (the user's own tiles), Most visited (from History, not in private browsing) and Bookmarks (the top level's
+// folders, then its newest bookmarks, and "All bookmarks" when they don't all fit). Everything comes from this
+// computer. Up and Down between rows keep the focus near the same place across.
 
 import QtQuick
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.bigscreen.ui as BigscreenUI
 import Sofa
 import "words.js" as Words
 
-FocusScope {
+BigscreenUI.Page {
     id: page
 
     property bool privateMode: false
@@ -24,6 +26,8 @@ FocusScope {
     signal exitRequested()
     signal tileHeld(var tile)
     signal addTile()
+    // Back on the start page (when no tile is being carried).
+    signal backPressed()
 
     // Bookmarks cards on the start page: one line of twelve, as on Android.
     readonly property int bookmarkSlots: 12
@@ -38,6 +42,15 @@ FocusScope {
 
     Accessible.role: Accessible.Pane
     Accessible.name: qsTr("Start page")
+
+    BigscreenUI.BackHandler.enabled: visible
+    BigscreenUI.BackHandler.onActivated: {
+        if (movingTile >= 0) {
+            drop();
+        } else {
+            backPressed();
+        }
+    }
 
     function refresh() {
         const t = JSON.parse(Library.tiles());
@@ -73,25 +86,57 @@ FocusScope {
         return parts.join(", ");
     }
 
-    // The rows that have cards (not `visible`, which is false whenever the start page itself is hidden).
-    readonly property var rows: [quickRow, mostRow, bookmarkRow].filter(r => r.items.length > 0)
+    // The rows that have cards, top to bottom.
+    readonly property var rows: [quickRow, mostRow, bookmarkRow].filter(r => r.count > 0)
 
-    // Focus when the start page is shown: the card that opened the page, else the first card.
+    // Focus when the start page is shown: the card that opened the page, else the first card. It waits for the rails
+    // to take their new cards (a rail with none is taken off the page until it has some).
     function focusFirst() {
+        Qt.callLater(focusNow);
+    }
+
+    function focusNow() {
         if (opened) {
             const r = opened.row;
-            if (r.items.length > 0) {
-                r.focusIndex(Math.min(opened.index, r.items.length - 1));
+            if (r.count > 0) {
+                focusIndex(r, Math.min(opened.index, r.count - 1));
                 opened = null;
                 return;
             }
             opened = null;
         }
         if (rows.length > 0) {
-            rows[0].focusIndex(0);
+            focusIndex(rows[0], 0);
         } else {
-            searchPill.forceActiveFocus();
+            searchButton.forceActiveFocus();
         }
+    }
+
+    function focusIndex(row, i) {
+        row.currentIndex = Math.max(0, Math.min(i, row.count - 1));
+        row.forceActiveFocus();
+    }
+
+    // Focus the card of `row` nearest to `sceneX` (the middle of what had the focus above or below).
+    function focusNear(row, sceneX) {
+        let best = 0;
+        let bestDistance = Infinity;
+        for (let i = 0; i < row.count; i++) {
+            const item = row.view.itemAtIndex(i);
+            if (!item) {
+                continue;
+            }
+            const d = Math.abs(item.mapToItem(null, item.width / 2, 0).x - sceneX);
+            if (d < bestDistance) {
+                bestDistance = d;
+                best = i;
+            }
+        }
+        focusIndex(row, best);
+    }
+
+    function middleOf(item) {
+        return item ? item.mapToItem(null, item.width / 2, 0).x : 0;
     }
 
     function open(row, item, index) {
@@ -108,11 +153,14 @@ FocusScope {
     }
 
     function moveRow(from, delta) {
+        if (movingTile >= 0) {
+            return;
+        }
         const i = rows.indexOf(from) + delta;
         if (i < 0) {
-            searchPill.forceActiveFocus();
+            searchButton.forceActiveFocus();
         } else if (i < rows.length) {
-            rows[i].focusNear(from.focusX());
+            focusNear(rows[i], middleOf(from.currentItem));
         }
     }
 
@@ -120,214 +168,176 @@ FocusScope {
         const i = tiles.findIndex(t => t.id === tileId);
         if (i >= 0) {
             movingTile = i;
-            quickRow.focusIndex(i);
+            focusIndex(quickRow, i);
         }
+    }
+
+    // Left or Right while a tile is carried: it swaps places with its neighbour ("Add site" stays last).
+    function carry(to) {
+        if (to < 0 || to >= tiles.length - 1) {
+            return;
+        }
+        const t = tiles.slice();
+        const moved = t.splice(movingTile, 1)[0];
+        t.splice(to, 0, moved);
+        tiles = t;
+        movingTile = to;
+        focusIndex(quickRow, to);
+    }
+
+    function drop() {
+        Library.reorderTiles(JSON.stringify(tiles.filter(t => t.kind === "site").map(t => t.id)));
+        movingTile = -1;
     }
 
     // A private session's start page looks apart, so it is never mistaken for the normal one.
-    Rectangle {
-        anchors.fill: parent
+    background: BigscreenUI.AmbientBackground {
         color: page.privateMode ? Qt.darker(Kirigami.Theme.backgroundColor, 1.6) : Kirigami.Theme.backgroundColor
+        tint: page.privateMode ? "#8e44ad" : Kirigami.Theme.highlightColor
     }
 
-    ColumnLayout {
+    // In a small window the top buttons show only their icons, so they all fit.
+    readonly property bool compact: width < Kirigami.Units.gridUnit * 80
+
+    component TopButton: BigscreenUI.Button {
+        property string label
+        Layout.alignment: Qt.AlignVCenter
+        flat: true
+        text: page.compact ? "" : label
+        Accessible.name: label
+    }
+
+    component CardRail: BigscreenUI.ContentRail {
+        id: rail
+        Keys.onUpPressed: page.moveRow(rail, -1)
+        Keys.onDownPressed: page.moveRow(rail, 1)
+    }
+
+    component Card: SiteCard {
+        required property var modelData
+        required property int index
+        title: modelData.title
+        url: modelData.url || ""
+        detail: modelData.detail || ""
+        iconName: modelData.icon || ""
+        holdable: modelData.holdable === true
+    }
+
+    BigscreenUI.RailView {
+        id: rails
         anchors.fill: parent
-        anchors.leftMargin: Kirigami.Units.gridUnit * 3
-        anchors.rightMargin: Kirigami.Units.gridUnit * 3
-        anchors.topMargin: Kirigami.Units.gridUnit * 1.5
-        spacing: Kirigami.Units.gridUnit
+        anchors.topMargin: page.contentMargins.top - topMargin
+        bottomMargin: page.contentMargins.bottom
+        focus: true
 
-        RowLayout {
-            id: topBar
-            Layout.fillWidth: true
-            spacing: Kirigami.Units.largeSpacing
-
-            Image {
-                Layout.alignment: Qt.AlignTop
-                source: "qrc:/sofa/icon.svg"
-                sourceSize.width: Kirigami.Units.gridUnit * 3
-                sourceSize.height: Kirigami.Units.gridUnit * 3
-                Accessible.ignored: true
-            }
-
-            Pressable {
-                id: searchPill
-                Layout.alignment: Qt.AlignTop
-                Layout.preferredWidth: Kirigami.Units.gridUnit * 30
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 3
-                focus: true
-                Accessible.name: qsTr("Search or type a web address")
-                KeyNavigation.right: bookmarksButton
-                Keys.onDownPressed: if (page.rows.length > 0) page.rows[0].focusNear(searchPill.mapToItem(null, searchPill.width / 4, 0).x)
-                onActivated: page.search()
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: height / 2
-                    color: searchPill.activeFocus ? Kirigami.Theme.highlightColor : Kirigami.Theme.alternateBackgroundColor
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: Kirigami.Units.gridUnit
-                        anchors.rightMargin: Kirigami.Units.gridUnit
-                        spacing: Kirigami.Units.largeSpacing
-
-                        Kirigami.Icon {
-                            source: "search"
-                            Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                            Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                            color: searchPill.activeFocus ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.disabledTextColor
-                            isMask: true
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: qsTr("Search or type a web address")
-                            color: searchPill.activeFocus ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.disabledTextColor
-                            font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.3
-                            elide: Text.ElideRight
-                        }
-                    }
-                }
-            }
-
-            Item {
-                Layout.fillWidth: true
-            }
-
-            Row {
-                id: buttons
-                Layout.alignment: Qt.AlignTop
-                spacing: Kirigami.Units.smallSpacing
-
-                Keys.onDownPressed: if (page.rows.length > 0) page.rows[0].focusNear(page.width / 2)
-
-                IconButton {
-                    id: bookmarksButton
-                    iconName: "bookmarks"
-                    text: qsTr("Bookmarks")
-                    KeyNavigation.left: searchPill
-                    KeyNavigation.right: historyButton
-                    onActivated: page.openBookmarks(0)
-                }
-                IconButton {
-                    id: historyButton
-                    iconName: "view-history"
-                    text: qsTr("History")
-                    KeyNavigation.right: privateButton
-                    onActivated: page.openHistory()
-                }
-                IconButton {
-                    id: privateButton
-                    iconName: "view-private"
-                    text: page.privateMode ? qsTr("Private: on") : qsTr("Private")
-                    checked: page.privateMode
-                    KeyNavigation.right: settingsButton
-                    onActivated: page.togglePrivate()
-                }
-                IconButton {
-                    id: settingsButton
-                    iconName: "settings-configure"
-                    text: qsTr("Settings")
-                    KeyNavigation.right: exitButton
-                    onActivated: page.openSettings()
-                }
-                IconButton {
-                    id: exitButton
-                    iconName: "application-exit"
-                    text: qsTr("Exit")
-                    onActivated: page.exitRequested()
-                }
-            }
-        }
-
-        Kirigami.InlineMessage {
-            Layout.fillWidth: true
-            visible: page.privateMode
-            type: Kirigami.MessageType.Information
-            text: qsTr("Private browsing: no history is kept, and cookies and site data are erased when you leave it.")
-        }
-
-        Flickable {
-            id: flick
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            contentHeight: rowsColumn.implicitHeight + Kirigami.Units.gridUnit * 2
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            interactive: contentHeight > height
-
-            // Keeps the row in focus in sight.
-            function reveal(item) {
-                const top = item.mapToItem(rowsColumn, 0, 0).y;
-                const bottom = top + item.height;
-                if (top < contentY) {
-                    contentY = Math.max(0, top - Kirigami.Units.gridUnit);
-                } else if (bottom > contentY + height) {
-                    contentY = Math.min(contentHeight - height, bottom - height + Kirigami.Units.gridUnit);
-                }
-            }
-
-            Behavior on contentY {
-                NumberAnimation { duration: Kirigami.Units.shortDuration }
-            }
+        FocusScope {
+            id: top
+            implicitHeight: topColumn.implicitHeight + Kirigami.Units.gridUnit
 
             ColumnLayout {
-                id: rowsColumn
-                width: flick.width
-                spacing: Kirigami.Units.gridUnit * 1.5
+                id: topColumn
+                x: page.contentMargins.left
+                width: parent.width - x - page.contentMargins.right
+                spacing: Kirigami.Units.gridUnit
 
-                CardRow {
-                    id: quickRow
+                RowLayout {
                     Layout.fillWidth: true
-                    title: qsTr("Quick access")
-                    items: page.tiles
-                    movingIndex: page.movingTile
-                    onActiveFocusChanged: if (activeFocus) flick.reveal(this)
-                    onOpened: (item, index) => page.open(quickRow, item, index)
-                    onHeld: item => page.tileHeld(item)
-                    onCarry: (from, to) => {
-                        // "Add site" stays last.
-                        if (to < 0 || to >= page.tiles.length - 1) {
-                            return;
-                        }
-                        const t = page.tiles.slice();
-                        const moved = t.splice(from, 1)[0];
-                        t.splice(to, 0, moved);
-                        page.tiles = t;
-                        page.movingTile = to;
-                        quickRow.focusIndex(to);
+                    spacing: Kirigami.Units.gridUnit
+                    BigscreenUI.KeyNavigationGroup.orientation: Qt.Horizontal
+                    Keys.onDownPressed: if (page.rows.length > 0) page.focusNear(page.rows[0], page.middleOf(page.Window.activeFocusItem))
+
+                    Image {
+                        Layout.alignment: Qt.AlignVCenter
+                        source: "qrc:/sofa/icon.svg"
+                        sourceSize.width: Kirigami.Units.iconSizes.huge
+                        sourceSize.height: Kirigami.Units.iconSizes.huge
+                        Accessible.ignored: true
                     }
-                    onDropped: {
-                        Library.reorderTiles(JSON.stringify(page.tiles.filter(t => t.kind === "site").map(t => t.id)));
-                        page.movingTile = -1;
+
+                    BigscreenUI.ButtonDelegate {
+                        id: searchButton
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: Kirigami.Units.gridUnit * 14
+                        Layout.maximumWidth: Kirigami.Units.gridUnit * 30
+                        focus: true
+                        icon.name: page.privateMode ? "view-private" : "search"
+                        text: qsTr("Search or type a web address")
+                        textFont.pixelSize: BigscreenUI.Units.headingFontPixelSize
+                        onClicked: page.search()
                     }
-                    Keys.onUpPressed: page.moveRow(quickRow, -1)
-                    Keys.onDownPressed: page.moveRow(quickRow, 1)
+
+                    TopButton {
+                        icon.name: "bookmarks"
+                        label: qsTr("Bookmarks")
+                        onClicked: page.openBookmarks(0)
+                    }
+                    TopButton {
+                        icon.name: "view-history"
+                        label: qsTr("History")
+                        onClicked: page.openHistory()
+                    }
+                    TopButton {
+                        icon.name: "view-private"
+                        label: page.privateMode ? qsTr("Private: on") : qsTr("Private")
+                        checked: page.privateMode
+                        onClicked: page.togglePrivate()
+                    }
+                    TopButton {
+                        icon.name: "settings-configure"
+                        label: qsTr("Settings")
+                        onClicked: page.openSettings()
+                    }
+                    TopButton {
+                        icon.name: "window-close-symbolic"
+                        label: qsTr("Exit")
+                        onClicked: page.exitRequested()
+                    }
                 }
 
-                CardRow {
-                    id: mostRow
+                BigscreenUI.Label {
                     Layout.fillWidth: true
-                    visible: page.mostVisited.length > 0
-                    title: qsTr("Most visited")
-                    items: page.mostVisited
-                    onActiveFocusChanged: if (activeFocus) flick.reveal(this)
-                    onOpened: (item, index) => page.open(mostRow, item, index)
-                    Keys.onUpPressed: page.moveRow(mostRow, -1)
-                    Keys.onDownPressed: page.moveRow(mostRow, 1)
+                    visible: page.privateMode
+                    text: qsTr("Private browsing: no history is kept, and cookies and site data are erased when you leave it.")
+                    wrapMode: Text.Wrap
+                    color: Kirigami.Theme.disabledTextColor
                 }
+            }
+        }
 
-                CardRow {
-                    id: bookmarkRow
-                    Layout.fillWidth: true
-                    visible: page.bookmarkCards.length > 0
-                    title: qsTr("Bookmarks")
-                    items: page.bookmarkCards
-                    onActiveFocusChanged: if (activeFocus) flick.reveal(this)
-                    onOpened: (item, index) => page.open(bookmarkRow, item, index)
-                    Keys.onUpPressed: page.moveRow(bookmarkRow, -1)
-                    Keys.onDownPressed: page.moveRow(bookmarkRow, 1)
+        CardRail {
+            id: quickRow
+            title: qsTr("Quick access")
+            model: page.tiles
+            delegate: Card {
+                moving: index === page.movingTile
+                onClicked: page.movingTile < 0 ? page.open(quickRow, modelData, index) : page.drop()
+                onHeld: page.tileHeld(modelData)
+                Keys.onLeftPressed: event => {
+                    event.accepted = page.movingTile >= 0;
+                    if (event.accepted) page.carry(page.movingTile - 1);
                 }
+                Keys.onRightPressed: event => {
+                    event.accepted = page.movingTile >= 0;
+                    if (event.accepted) page.carry(page.movingTile + 1);
+                }
+            }
+        }
+
+        CardRail {
+            id: mostRow
+            title: qsTr("Most visited")
+            model: page.mostVisited
+            delegate: Card {
+                onClicked: page.open(mostRow, modelData, index)
+            }
+        }
+
+        CardRail {
+            id: bookmarkRow
+            title: qsTr("Bookmarks")
+            model: page.bookmarkCards
+            delegate: Card {
+                onClicked: page.open(bookmarkRow, modelData, index)
             }
         }
     }

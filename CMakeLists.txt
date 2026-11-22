@@ -29,6 +29,39 @@ if(Qt6_VERSION VERSION_LESS SOFA_QT_MIN)
     message(FATAL_ERROR "Sofa needs Qt ${SOFA_QT_MIN} or newer; this system has Qt ${Qt6_VERSION}. "
         "Use the Flatpak instead (./sofa.sh flatpak), which brings a current Qt and web engine, or Nix (nix run .).")
 endif()
+# KDE's components for TV apps (org.kde.bigscreen.ui), which Sofa's screens are made of. When the system has none,
+# Sofa builds them from their release tag and installs them in a folder of its own, which only Sofa looks in.
+set(SOFA_BIGSCREEN_UI_TAG v0.1.0)
+set(SOFA_BIGSCREEN_UI AUTO CACHE STRING "Build KDE's bigscreen-ui with Sofa: AUTO (when the system has none), ON or OFF")
+set(SOFA_BIGSCREEN_UI_SOURCE "" CACHE PATH "A bigscreen-ui source tree to build instead of downloading it")
+set(_bigscreen_ui_search "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_QML}")
+foreach(_var QML_IMPORT_PATH QML2_IMPORT_PATH)
+    if(DEFINED ENV{${_var}})
+        string(REPLACE ":" ";" _paths "$ENV{${_var}}")
+        list(APPEND _bigscreen_ui_search ${_paths})
+    endif()
+endforeach()
+find_file(SOFA_SYSTEM_BIGSCREEN_UI qmldir PATHS ${_bigscreen_ui_search} PATH_SUFFIXES org/kde/bigscreen/ui NO_DEFAULT_PATH)
+if(SOFA_BIGSCREEN_UI STREQUAL "ON" OR (SOFA_BIGSCREEN_UI STREQUAL "AUTO" AND NOT SOFA_SYSTEM_BIGSCREEN_UI))
+    message(STATUS "Building KDE's bigscreen-ui ${SOFA_BIGSCREEN_UI_TAG} with Sofa")
+    include(FetchContent)
+    if(SOFA_BIGSCREEN_UI_SOURCE)
+        FetchContent_Declare(bigscreen_ui SOURCE_DIR "${SOFA_BIGSCREEN_UI_SOURCE}")
+    else()
+        FetchContent_Declare(bigscreen_ui
+            GIT_REPOSITORY https://invent.kde.org/libraries/bigscreen-ui.git
+            GIT_TAG 2ab509c16a38ab87a066a35aeb3e7aa4c4cafe5a # ${SOFA_BIGSCREEN_UI_TAG}
+            GIT_SHALLOW FALSE)
+    endif()
+    # Next to Sofa, not where the system's QML modules go: a distribution package of it later doesn't collide.
+    set(KDE_INSTALL_QMLDIR "lib/${SOFA_BINARY}/qml" CACHE PATH "" FORCE)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(bigscreen_ui)
+elseif(NOT SOFA_SYSTEM_BIGSCREEN_UI)
+    message(WARNING "KDE's bigscreen-ui (QML module org.kde.bigscreen.ui) was not found; Sofa won't start without it. "
+        "Install it, or configure with -DSOFA_BIGSCREEN_UI=AUTO.")
+endif()
+
 find_program(CARGO cargo REQUIRED)
 get_target_property(_qmake Qt6::qmake IMPORTED_LOCATION)
 if(DEFINED ENV{QMAKE})

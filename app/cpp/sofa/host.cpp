@@ -240,6 +240,17 @@ bool Host::eventFilter(QObject *watched, QEvent *event)
             Q_EMIT windowShownChanged();
         }
     }
+    // Sofa's screens are made of KDE's TV controls, which take OK as Return: a remote's Select is sent on as Return
+    // (and then counted as a press, once).
+    if (!m_remoteKeys && watched->isWindowType() && (type == QEvent::KeyPress || type == QEvent::KeyRelease)) {
+        auto *key = static_cast<QKeyEvent *>(event);
+        if (key->key() == Qt::Key_Select) {
+            QKeyEvent ok(type, Qt::Key_Return, key->modifiers(), QStringLiteral("\r"), key->isAutoRepeat(),
+                         static_cast<quint16>(key->count()));
+            QCoreApplication::sendEvent(watched, &ok);
+            return true;
+        }
+    }
     // Each event reaches the window first, so a press is counted once, there.
     if (watched->isWindowType() && isPress(event)) {
         Q_EMIT pressed();

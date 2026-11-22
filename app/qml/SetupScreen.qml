@@ -5,12 +5,12 @@
 // opens from Settings.
 
 import QtQuick
-import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.bigscreen.ui as BigscreenUI
 import Sofa
 
-FocusScope {
+BigscreenUI.Page {
     id: screen
 
     property var engines: []
@@ -59,32 +59,31 @@ FocusScope {
         screen.done();
     }
 
-    Keys.onBackPressed: screen.done()
-    Keys.onEscapePressed: screen.done()
+    background: BigscreenUI.AmbientBackground {}
 
-    Rectangle {
-        anchors.fill: parent
-        color: Kirigami.Theme.backgroundColor
-    }
+    BigscreenUI.BackHandler.enabled: visible
+    BigscreenUI.BackHandler.onActivated: screen.done()
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: Kirigami.Units.gridUnit * 3
+        anchors.topMargin: screen.contentMargins.top
+        anchors.bottomMargin: screen.contentMargins.bottom
         spacing: Kirigami.Units.gridUnit
 
         Image {
             Layout.alignment: Qt.AlignHCenter
             source: "qrc:/sofa/icon.svg"
-            sourceSize.width: Kirigami.Units.gridUnit * 4
-            sourceSize.height: Kirigami.Units.gridUnit * 4
+            sourceSize.width: Kirigami.Units.iconSizes.enormous
+            sourceSize.height: Kirigami.Units.iconSizes.enormous
             Accessible.ignored: true
         }
-        Kirigami.Heading {
+        BigscreenUI.Label {
             Layout.alignment: Qt.AlignHCenter
             text: qsTr("Choose your search engine")
-            level: 1
+            type: BigscreenUI.Label.Title
+            Accessible.role: Accessible.Heading
         }
-        QQC2.Label {
+        BigscreenUI.Label {
             Layout.alignment: Qt.AlignHCenter
             text: qsTr("Sofa doesn't pick one for you. You can change it any time in Settings.")
             color: Kirigami.Theme.disabledTextColor
@@ -93,12 +92,14 @@ FocusScope {
         ListView {
             id: list
             Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth: Math.min(parent.width, Kirigami.Units.gridUnit * 36)
+            Layout.preferredWidth: Math.min(parent.width - screen.contentMargins.left - screen.contentMargins.right,
+                                            Kirigami.Units.gridUnit * 40)
             Layout.fillHeight: true
             model: screen.engines
             keyNavigationEnabled: true
             clip: true
             spacing: Kirigami.Units.smallSpacing
+            boundsBehavior: Flickable.StopAtBounds
             highlightRangeMode: ListView.ApplyRange
             preferredHighlightBegin: Kirigami.Units.gridUnit * 3
             preferredHighlightEnd: height - Kirigami.Units.gridUnit * 3

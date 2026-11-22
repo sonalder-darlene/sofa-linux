@@ -1,79 +1,87 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// A card on the start page: a site (icon and name), a folder, or an action such as "Add site". The card in focus
-// grows and gets the theme's highlight outline, so it can be seen from the sofa.
+// A card on the start page, made of KDE's media card: a site (its icon on a tile coloured from its name), a folder,
+// or an action such as "Add site". OK opens it; OK held or Menu asks for its actions (`held`) when it has some.
 
 import QtQuick
-import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.bigscreen.ui as BigscreenUI
 
-Pressable {
+BigscreenUI.MediaCard {
     id: card
 
     property string title: ""
     property string url: ""
     property string detail: ""
+    // A theme icon instead of a site (folders, "Add site", "All bookmarks").
     property string iconName: ""
+    property bool holdable: false
     // Being carried with Left and Right (Quick access "Move").
     property bool moving: false
 
-    width: Kirigami.Units.gridUnit * 9
-    height: Kirigami.Units.gridUnit * 8
-    scale: activeFocus ? 1.08 : 1
-    z: activeFocus ? 1 : 0
-    Accessible.name: detail !== "" ? title + ", " + detail : title
+    signal held()
 
-    Behavior on scale {
-        NumberAnimation { duration: Kirigami.Units.shortDuration }
+    artworkWidth: Kirigami.Units.gridUnit * 12
+    artworkHeight: Math.round(artworkWidth * 9 / 16)
+    text: title
+    subtitle: detail
+    opacity: moving ? 0.75 : 1
+
+    // A long press of OK on a card without actions opens it, as a short one does.
+    onPressAndHold: holdable ? held() : clicked()
+    Keys.onMenuPressed: event => {
+        event.accepted = holdable;
+        if (holdable && !event.isAutoRepeat) {
+            held();
+        }
     }
 
+    // A site's tile: a colour picked from its name, light at the top, with the site's icon in the middle.
     Rectangle {
+        id: tile
+        parent: card.artworkItem
         anchors.fill: parent
-        radius: Kirigami.Units.cornerRadius * 2
-        color: card.activeFocus ? Qt.lighter(Kirigami.Theme.alternateBackgroundColor, 1.15)
-                                : Kirigami.Theme.alternateBackgroundColor
-        opacity: card.moving ? 0.75 : 1
-        border.width: card.activeFocus ? 3 : 0
+        radius: BigscreenUI.Units.cardCornerRadius
+        readonly property color tone: card.iconName !== "" ? Kirigami.Theme.alternateBackgroundColor
+                                                           : Qt.hsva(Math.abs(hash(card.title + card.url)) % 360 / 360, 0.45, 0.6, 1)
+        gradient: Gradient {
+            GradientStop { position: 0; color: Qt.lighter(tile.tone, 1.2) }
+            GradientStop { position: 1; color: Qt.darker(tile.tone, 1.3) }
+        }
+        border.width: card.activeFocus ? BigscreenUI.Units.focusBorderWidth : 0
         border.color: Kirigami.Theme.highlightColor
 
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: Kirigami.Units.largeSpacing
-            spacing: Kirigami.Units.smallSpacing
+        function hash(s) {
+            let h = 0;
+            for (let i = 0; i < s.length; i++) {
+                h = (h * 31 + s.charCodeAt(i)) | 0;
+            }
+            return h;
+        }
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: Math.round(parent.height * 0.5)
+            height: width
+            radius: width * 0.2
+            visible: card.iconName === ""
+            color: Qt.rgba(1, 1, 1, 0.95)
 
             SiteIcon {
-                Layout.alignment: Qt.AlignHCenter
-                Layout.preferredWidth: Kirigami.Units.iconSizes.large
-                Layout.preferredHeight: Kirigami.Units.iconSizes.large
+                anchors.centerIn: parent
+                width: Math.round(parent.width * 0.65)
+                height: width
                 url: card.url
                 title: card.title
-                iconName: card.iconName
             }
+        }
 
-            Text {
-                Layout.fillWidth: true
-                text: card.title
-                color: Kirigami.Theme.textColor
-                font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.05
-                horizontalAlignment: Text.AlignHCenter
-                elide: Text.ElideRight
-                maximumLineCount: 2
-                wrapMode: Text.Wrap
-            }
-
-            Text {
-                Layout.fillWidth: true
-                visible: card.detail !== ""
-                text: card.detail
-                color: Kirigami.Theme.disabledTextColor
-                font.pointSize: Kirigami.Theme.smallFont.pointSize
-                horizontalAlignment: Text.AlignHCenter
-                elide: Text.ElideRight
-            }
-
-            Item {
-                Layout.fillHeight: true
-            }
+        Kirigami.Icon {
+            anchors.centerIn: parent
+            width: Math.round(parent.height * 0.45)
+            height: width
+            visible: card.iconName !== ""
+            source: card.iconName
         }
     }
 }

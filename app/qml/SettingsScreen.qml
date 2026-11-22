@@ -1,67 +1,62 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Settings: the search engine, what Sofa opens at start, ad blocking, and what this copy is. More settings come with
-// the features they belong to.
+// Settings, laid out as KDE's TV settings pages: the search engine, what Sofa opens at start, ad blocking, and what
+// this copy is. More settings come with the features they belong to.
 
 import QtQuick
-import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.bigscreen.ui as BigscreenUI
 import Sofa
 
-FocusScope {
+BigscreenUI.ScrollablePage {
     id: screen
 
     // The page in sight, offered as "the open page" for Open at start (never a private one); "" for none.
     property string openPage: ""
-    property var rows: []
+    // The row whose question is open, focused again when it closes.
+    property Item lastRow: engineRow
+    // Bumped to read the settings again.
+    property int revision: 0
 
     signal chooseEngine()
     signal back()
 
+    title: qsTr("Settings")
+    background: BigscreenUI.AmbientBackground {}
+
+    BigscreenUI.BackHandler.enabled: visible
+    BigscreenUI.BackHandler.onActivated: screen.back()
+
+    // Shows the screen with the row `focusKey` ("engine", "open", "adblock", "about"; "" for the first) in focus.
     function start(focusKey) {
-        refresh();
-        const i = Math.max(0, rows.findIndex(r => r.key === focusKey));
-        list.currentIndex = i;
-        list.forceActiveFocus();
+        revision++;
+        const rows = { engine: engineRow, open: openRow, adblock: adBlockRow, about: aboutRow };
+        (rows[focusKey] || engineRow).forceActiveFocus();
+        scrollToTop();
     }
 
-    function refresh() {
-        const engines = JSON.parse(Session.engines());
-        const engine = engines.find(e => e.id === Session.value("search_engine"));
+    readonly property string engineName: {
+        revision;
+        const engine = JSON.parse(Session.engines()).find(e => e.id === Session.value("search_engine"));
+        return engine ? engine.name : qsTr("Not chosen yet (DuckDuckGo for now)");
+    }
+    readonly property string openAtStart: {
+        revision;
         const open = Session.value("open_at_start");
         const page = Session.value("start_page");
-        // A new list puts the focus back on its first row: keep it where it was.
-        const keep = Math.max(0, list.currentIndex);
-        Qt.callLater(() => list.currentIndex = keep);
-        rows = [
-            { key: "engine", title: qsTr("Search engine"), value: engine ? engine.name : qsTr("Not chosen yet (DuckDuckGo for now)"), icon: "search" },
-            { key: "open", title: qsTr("Open at start"), icon: "go-home",
-              value: open === "page" ? (page !== "" ? Session.label(page) : qsTr("A web page"))
-                   : open === "last" ? qsTr("Where I left off") : qsTr("Start page") },
-            { key: "adblock", title: qsTr("Block ads and trackers"),
-              icon: Session.value("adblock") === "true" ? "security-high" : "security-low",
-              value: Session.value("adblock") === "true" ? qsTr("On") : qsTr("Off") },
-            { key: "about", title: qsTr("About Sofa"), value: qsTr("Version %1").arg(Core.version), icon: "help-about" }
-        ];
+        return open === "page" ? (page !== "" ? Session.label(page) : qsTr("A web page"))
+             : open === "last" ? qsTr("Where I left off") : qsTr("Start page");
     }
+    readonly property bool adBlock: (revision, Session.value("adblock") === "true")
 
-    function activate(row) {
-        if (row.key === "engine") {
-            screen.chooseEngine();
-        } else if (row.key === "open") {
-            askOpenAtStart();
-        } else if (row.key === "adblock") {
-            Session.setValue("adblock", Session.value("adblock") === "true" ? "false" : "true");
-            refresh();
-        } else if (row.key === "about") {
-            const engine = JSON.parse(Session.engineInfo());
-            choice.tell(qsTr("Sofa %1").arg(Core.version),
-                        qsTr("A TV web browser for KDE Plasma Bigscreen. Free software under the GNU GPL version 3. Sofa has no servers and no accounts of its own, and sends nothing about you anywhere. Bookmarks, history and settings stay on this computer.")
-                        + "\n\n"
-                        + qsTr("Web engine: Qt WebEngine on Qt %1, built from Chromium %2, with Chromium's security fixes up to version %3.")
-                              .arg(engine.qt).arg(engine.chromium).arg(engine.fixes));
-        }
+    function about() {
+        const engine = JSON.parse(Session.engineInfo());
+        choice.tell(qsTr("Sofa %1").arg(Core.version),
+                    qsTr("A TV web browser for KDE Plasma Bigscreen. Free software under the GNU GPL version 3. Sofa has no servers and no accounts of its own, and sends nothing about you anywhere. Bookmarks, history and settings stay on this computer.")
+                    + "\n\n"
+                    + qsTr("Web engine: Qt WebEngine on Qt %1, built from Chromium %2, with Chromium's security fixes up to version %3.")
+                          .arg(engine.qt).arg(engine.chromium).arg(engine.fixes));
     }
 
     function askOpenAtStart() {
@@ -77,7 +72,7 @@ FocusScope {
                 askStartPage();
             } else {
                 Session.setValue("open_at_start", value);
-                refresh();
+                revision++;
             }
         }, Math.max(0, options.findIndex(o => o.value === current)));
     }
@@ -99,61 +94,65 @@ FocusScope {
             }
             Session.setValue("start_page", address);
             Session.setValue("open_at_start", "page");
-            refresh();
+            revision++;
             return "";
         });
     }
 
-    Keys.onBackPressed: screen.back()
-    Keys.onEscapePressed: screen.back()
-
-    Rectangle {
-        anchors.fill: parent
-        color: Kirigami.Theme.backgroundColor
-    }
-
     ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: Kirigami.Units.gridUnit * 2
-        anchors.leftMargin: Kirigami.Units.gridUnit * 3
-        anchors.rightMargin: Kirigami.Units.gridUnit * 3
-        spacing: Kirigami.Units.gridUnit
+        spacing: Kirigami.Units.smallSpacing
+        BigscreenUI.KeyNavigationGroup.orientation: Qt.Vertical
 
-        Kirigami.Heading {
-            level: 1
-            text: qsTr("Settings")
-            Accessible.role: Accessible.Heading
-        }
-
-        ListView {
-            id: list
+        BigscreenUI.ButtonDelegate {
+            id: engineRow
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            model: screen.rows
-            keyNavigationEnabled: true
-            spacing: Kirigami.Units.smallSpacing
-            Accessible.role: Accessible.List
-            Accessible.name: qsTr("Settings")
-
-            delegate: ListRow {
-                required property var modelData
-                width: ListView.view.width
-                focus: ListView.isCurrentItem
-                iconName: modelData.icon
-                title: modelData.title
-                detail: modelData.value
-                onActivated: screen.activate(modelData)
+            icon.name: "search"
+            text: qsTr("Search engine")
+            description: screen.engineName
+            onClicked: screen.chooseEngine()
+        }
+        BigscreenUI.ButtonDelegate {
+            id: openRow
+            Layout.fillWidth: true
+            icon.name: "go-home"
+            text: qsTr("Open at start")
+            description: screen.openAtStart
+            onClicked: {
+                screen.lastRow = openRow;
+                screen.askOpenAtStart();
+            }
+        }
+        BigscreenUI.SwitchDelegate {
+            id: adBlockRow
+            Layout.fillWidth: true
+            icon.name: screen.adBlock ? "security-high" : "security-low"
+            text: qsTr("Block ads and trackers")
+            checked: screen.adBlock
+            onToggled: {
+                Session.setValue("adblock", checked ? "true" : "false");
+                screen.revision++;
+            }
+        }
+        BigscreenUI.ButtonDelegate {
+            id: aboutRow
+            Layout.fillWidth: true
+            icon.name: "help-about"
+            text: qsTr("About Sofa")
+            description: qsTr("Version %1").arg(Core.version)
+            onClicked: {
+                screen.lastRow = aboutRow;
+                screen.about();
             }
         }
     }
 
     ChoiceDialog {
         id: choice
-        onClosed: if (screen.visible && !text.visible) list.forceActiveFocus()
+        onClosed: if (screen.visible && !text.visible) screen.lastRow.forceActiveFocus()
     }
 
     TextDialog {
         id: text
-        onClosed: if (screen.visible && !choice.visible) list.forceActiveFocus()
+        onClosed: if (screen.visible && !choice.visible) screen.lastRow.forceActiveFocus()
     }
 }

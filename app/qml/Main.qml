@@ -14,14 +14,19 @@
 // computer's memory) and any out of sight for ten minutes are unloaded; their address and back list stay.
 
 import QtQuick
-import QtQuick.Controls as QQC2
-import QtQuick.Layouts
+import QtQuick.Templates as T
 import QtWebEngine
 import org.kde.kirigami as Kirigami
+import org.kde.bigscreen.ui as BigscreenUI
 import Sofa
 
-Kirigami.AbstractApplicationWindow {
+T.ApplicationWindow {
     id: root
+
+    // KDE's TV look: the window's colours, and Bigscreen's colour scheme outside Plasma (Plasma's own inside it).
+    Kirigami.Theme.colorSet: Kirigami.Theme.Window
+    Kirigami.Theme.inherit: false
+    readonly property QtObject colorSchemes: BigscreenUI.ColorSchemeManager
 
     required property WebEngineProfile profile
     required property QtObject host
@@ -540,7 +545,7 @@ Kirigami.AbstractApplicationWindow {
     }
 
     function notify(text) {
-        showPassiveNotification(text);
+        toast.show(text, "");
     }
 
     function quit() {
@@ -701,18 +706,6 @@ Kirigami.AbstractApplicationWindow {
                 if (root.currentView) {
                     root.host.mouse(root.currentView, 3, x, y);
                 }
-            }
-        }
-
-        // The menu's dim veil over the page.
-        Rectangle {
-            anchors.fill: parent
-            z: 11
-            color: "black"
-            opacity: root.menuShown ? 0.35 : 0
-            visible: opacity > 0
-            Behavior on opacity {
-                NumberAnimation { duration: Kirigami.Units.shortDuration }
             }
         }
 
@@ -1058,8 +1051,7 @@ Kirigami.AbstractApplicationWindow {
         visible: root.screen === "start"
         focus: visible
         privateMode: root.privateMode
-        Keys.onBackPressed: root.backOnStart()
-        Keys.onEscapePressed: root.backOnStart()
+        onBackPressed: root.backOnStart()
         onOpenUrl: url => root.openInCurrent(url)
         onSearch: {
             root.openScreen("search");
@@ -1200,5 +1192,15 @@ Kirigami.AbstractApplicationWindow {
     TextDialog {
         id: tileDialog
         onClosed: if (root.screen === "start" && !tileMenu.visible) startPage.focusFirst()
+    }
+
+    // Short notices ("Bookmarked", "Pop-up blocked"), over everything but the dialogs.
+    BigscreenUI.Toast {
+        id: toast
+        z: 100
+        timeout: 4000
+        // Over the menu's panel when it is open, so it never covers a button.
+        anchors.bottomMargin: root.menuShown ? menu.panelHeight + Kirigami.Units.gridUnit
+                                             : BigscreenUI.Units.verticalScreenMarginFor(root.height)
     }
 }

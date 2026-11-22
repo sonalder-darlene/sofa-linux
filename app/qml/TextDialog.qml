@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// A question with a text field (a folder name, a web address). OK in the field or on Save answers; Down reaches the
-// buttons; Back cancels. The system's on-screen keyboard opens for the field. An extra button can offer a ready
-// answer ("Use the open page").
+// A question with a text field (a folder name, a web address), on KDE's TV dialog. OK in the field or on Save answers;
+// Down reaches the buttons; Back cancels. The system's on-screen keyboard opens for the field. An extra button can
+// offer a ready answer ("Use the open page").
 
 import QtQuick
-import QtQuick.Controls as QQC2
 import QtQuick.Layouts
+import QtQuick.Templates as T
 import org.kde.kirigami as Kirigami
+import org.kde.bigscreen.ui as BigscreenUI
 
-QQC2.Popup {
-    id: dialog
+BigscreenUI.Dialog {
+    id: textDialog
 
-    property string title: ""
     property string message: ""
     property string error: ""
     property string extraText: ""
@@ -20,7 +20,8 @@ QQC2.Popup {
     property bool address: false
     property var answerHandler: null
 
-    // Asks `title`; `answer(text)` runs on Save and returns "" to close or an error message to keep the dialog open.
+    // Asks `options.title`; `answer(text)` runs on Save and returns "" to close or an error message to keep the
+    // dialog open.
     function ask(options, answer) {
         title = options.title || "";
         message = options.message || "";
@@ -45,101 +46,61 @@ QQC2.Popup {
         close();
     }
 
-    parent: QQC2.Overlay.overlay
-    anchors.centerIn: parent
-    width: Math.min(parent ? parent.width - Kirigami.Units.gridUnit * 4 : 600, Kirigami.Units.gridUnit * 36)
-    modal: true
-    focus: true
-    closePolicy: QQC2.Popup.CloseOnEscape | QQC2.Popup.CloseOnPressOutside
-    padding: Kirigami.Units.gridUnit
-
+    openFocusItem: field
     onOpened: {
-        field.forceActiveFocus();
         field.cursorPosition = field.text.length;
         Qt.inputMethod.show();
     }
     onClosed: Qt.inputMethod.hide()
 
-    background: Rectangle {
-        color: Kirigami.Theme.backgroundColor
-        radius: Kirigami.Units.cornerRadius * 2
-        border.color: Kirigami.Theme.disabledTextColor
-        border.width: 1
-    }
-
     contentItem: ColumnLayout {
         spacing: Kirigami.Units.largeSpacing
 
-        Kirigami.Heading {
+        BigscreenUI.Label {
             Layout.fillWidth: true
-            text: dialog.title
-            level: 2
-            wrapMode: Text.Wrap
-        }
-
-        QQC2.Label {
-            Layout.fillWidth: true
-            visible: dialog.message !== ""
-            text: dialog.message
+            visible: textDialog.message !== ""
+            text: textDialog.message
             wrapMode: Text.Wrap
             color: Kirigami.Theme.disabledTextColor
         }
 
-        QQC2.TextField {
+        BigscreenUI.TextField {
             id: field
             Layout.fillWidth: true
-            font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.3
-            inputMethodHints: dialog.address ? (Qt.ImhUrlCharactersOnly | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase)
+            inputMethodHints: textDialog.address ? (Qt.ImhUrlCharactersOnly | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase)
                                              : Qt.ImhNone
-            Accessible.name: dialog.title
-            onAccepted: dialog.answer(text)
-            KeyNavigation.down: dialog.extraText !== "" ? extraButton : saveButton
-            Keys.onBackPressed: dialog.close()
+            Accessible.name: textDialog.title
+            onAccepted: textDialog.answer(text)
+            KeyNavigation.down: textDialog.footer
         }
 
-        QQC2.Label {
+        BigscreenUI.Label {
             Layout.fillWidth: true
-            visible: dialog.error !== ""
-            text: dialog.error
+            visible: textDialog.error !== ""
+            text: textDialog.error
             wrapMode: Text.Wrap
             color: Kirigami.Theme.negativeTextColor
         }
+    }
 
-        RowLayout {
-            Layout.alignment: Qt.AlignRight
-            spacing: Kirigami.Units.largeSpacing
+    // Save answers only when the answer is good, so it is not the dialog's own "accept", which always closes.
+    footer: BigscreenUI.DialogButtonBox {
+        dialog: textDialog
+        standardButtons: T.Dialog.Cancel
+        Keys.onUpPressed: field.forceActiveFocus()
 
-            QQC2.Button {
-                id: extraButton
-                visible: dialog.extraText !== ""
-                text: dialog.extraText
-                KeyNavigation.up: field
-                KeyNavigation.right: saveButton
-                onClicked: dialog.answer(dialog.extraValue)
-                Keys.onReturnPressed: clicked()
-                Keys.onEnterPressed: clicked()
-                Keys.onBackPressed: dialog.close()
-            }
-            QQC2.Button {
-                id: saveButton
-                text: qsTr("Save")
-                highlighted: true
-                KeyNavigation.up: field
-                KeyNavigation.right: cancelButton
-                onClicked: dialog.answer(field.text)
-                Keys.onReturnPressed: clicked()
-                Keys.onEnterPressed: clicked()
-                Keys.onBackPressed: dialog.close()
-            }
-            QQC2.Button {
-                id: cancelButton
-                text: qsTr("Cancel")
-                KeyNavigation.up: field
-                onClicked: dialog.close()
-                Keys.onReturnPressed: clicked()
-                Keys.onEnterPressed: clicked()
-                Keys.onBackPressed: dialog.close()
-            }
+        BigscreenUI.Button {
+            id: saveButton
+            text: qsTr("Save")
+            icon.name: "dialog-ok"
+            T.DialogButtonBox.buttonRole: T.DialogButtonBox.ActionRole
+            onClicked: textDialog.answer(field.text)
+        }
+        BigscreenUI.Button {
+            visible: textDialog.extraText !== ""
+            text: textDialog.extraText
+            T.DialogButtonBox.buttonRole: T.DialogButtonBox.ActionRole
+            onClicked: textDialog.answer(textDialog.extraValue)
         }
     }
 }

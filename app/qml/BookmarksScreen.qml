@@ -6,14 +6,14 @@
 // Delete all. Rows are made only for what is on screen, so thousands of bookmarks open at once.
 
 import QtQuick
-import QtQuick.Controls as QQC2
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.bigscreen.ui as BigscreenUI
 import Sofa
 import "words.js" as Words
 
-FocusScope {
+BigscreenUI.Page {
     id: screen
 
     property int folderId: 0
@@ -54,7 +54,7 @@ FocusScope {
             list.positionViewAtIndex(i, ListView.Contain);
             list.forceActiveFocus();
         } else {
-            headerButtons.children[0].forceActiveFocus();
+            newFolderButton.forceActiveFocus();
         }
     }
 
@@ -269,44 +269,40 @@ FocusScope {
         }, 0);
     }
 
-    Keys.onBackPressed: goBack()
-    Keys.onEscapePressed: goBack()
+    background: BigscreenUI.AmbientBackground {}
 
-    Rectangle {
-        anchors.fill: parent
-        color: Kirigami.Theme.backgroundColor
-    }
+    BigscreenUI.BackHandler.enabled: visible
+    BigscreenUI.BackHandler.onActivated: goBack()
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: Kirigami.Units.gridUnit * 2
-        anchors.leftMargin: Kirigami.Units.gridUnit * 3
-        anchors.rightMargin: Kirigami.Units.gridUnit * 3
+        anchors.leftMargin: screen.contentMargins.left
+        anchors.rightMargin: screen.contentMargins.right
+        anchors.topMargin: screen.contentMargins.top
         spacing: Kirigami.Units.gridUnit
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: Kirigami.Units.largeSpacing
+            spacing: Kirigami.Units.gridUnit
 
-            Kirigami.Heading {
+            BigscreenUI.Label {
                 Layout.fillWidth: true
-                level: 1
+                type: BigscreenUI.Label.Title
                 elide: Text.ElideLeft
                 text: [qsTr("Bookmarks")].concat(screen.folder.path.map(p => p.title)).join("  ›  ")
                 Accessible.role: Accessible.Heading
             }
 
-            Row {
-                id: headerButtons
+            RowLayout {
                 spacing: Kirigami.Units.largeSpacing
+                BigscreenUI.KeyNavigationGroup.orientation: Qt.Horizontal
                 Keys.onDownPressed: if (screen.rows.length > 0) list.forceActiveFocus()
 
-                TextButton {
+                BigscreenUI.Button {
                     id: newFolderButton
+                    icon.name: "folder-new"
                     text: qsTr("New folder")
-                    iconName: "folder-new"
-                    KeyNavigation.right: transferButton
-                    onActivated: screen.askNewFolder(screen.folderId, id => {
+                    onClicked: screen.askNewFolder(screen.folderId, id => {
                         screen.load(screen.folderId, -1);
                         const i = screen.rows.findIndex(r => r.kind === "folder" && r.id === id);
                         if (i >= 0) {
@@ -315,50 +311,57 @@ FocusScope {
                         }
                     })
                 }
-                TextButton {
-                    id: transferButton
+                BigscreenUI.Button {
+                    icon.name: "document-import"
                     text: qsTr("Import or export")
-                    iconName: "document-import"
-                    KeyNavigation.right: deleteAllButton
-                    onActivated: screen.importOrExport()
+                    onClicked: screen.importOrExport()
                 }
-                TextButton {
-                    id: deleteAllButton
+                BigscreenUI.Button {
                     visible: screen.folderId === 0 && screen.rows.length > 0
+                    icon.name: "edit-delete"
                     text: qsTr("Delete all")
-                    iconName: "edit-delete"
-                    onActivated: screen.askDeleteAll()
+                    onClicked: screen.askDeleteAll()
                 }
             }
         }
 
-        QQC2.Label {
+        BigscreenUI.PlaceholderMessage {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: Kirigami.Units.gridUnit * 4
+            Layout.preferredWidth: implicitWidth
             visible: screen.rows.length === 0
-            Layout.fillWidth: true
-            wrapMode: Text.Wrap
-            color: Kirigami.Theme.disabledTextColor
-            text: qsTr("No bookmarks yet. Bookmark a page from the menu, or import them from another browser.")
+            iconName: "bookmarks"
+            text: qsTr("No bookmarks yet")
+            explanation: qsTr("Bookmark a page from the menu, or import them from another browser.")
         }
 
         ListView {
             id: list
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // The focused row's outline needs a little room at the sides.
+            Layout.leftMargin: -Kirigami.Units.smallSpacing
+            Layout.rightMargin: -Kirigami.Units.smallSpacing
+            visible: screen.rows.length > 0
             model: screen.rows
             keyNavigationEnabled: true
             clip: true
             spacing: Kirigami.Units.smallSpacing
+            boundsBehavior: Flickable.StopAtBounds
             highlightMoveDuration: Kirigami.Units.shortDuration
             preferredHighlightBegin: Kirigami.Units.gridUnit * 3
             preferredHighlightEnd: height - Kirigami.Units.gridUnit * 3
             highlightRangeMode: ListView.ApplyRange
+            bottomMargin: screen.contentMargins.bottom
             reuseItems: true
             Accessible.role: Accessible.List
             Accessible.name: qsTr("Bookmarks")
-            Keys.onUpPressed: event => currentIndex <= 0 ? newFolderButton.forceActiveFocus() : decrementCurrentIndex()
+
+            Keys.onUpPressed: currentIndex <= 0 ? newFolderButton.forceActiveFocus() : decrementCurrentIndex()
             // Channel and page keys move a screen at a time.
             Keys.onPressed: event => {
-                const page = Math.max(1, Math.floor(height / (Kirigami.Units.gridUnit * 3.5)) - 1);
+                const rowHeight = currentItem ? currentItem.height + spacing : Kirigami.Units.gridUnit * 4;
+                const page = Math.max(1, Math.floor(height / rowHeight) - 1);
                 if (event.key === Qt.Key_PageDown || event.key === Qt.Key_ChannelDown) {
                     currentIndex = Math.min(count - 1, currentIndex + page);
                     event.accepted = true;

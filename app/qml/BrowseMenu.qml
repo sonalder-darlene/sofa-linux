@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Sofa's menu over a page (Back or Menu on the remote): on top the page's address, the tabs (when there are two or
-// more) and "New tab"; under it the buttons. It opens on the button used last (Home the first time); Back closes it.
-// OK on another tab switches to it; OK on the tab in sight, or OK held on any tab, asks which tabs to close.
+// Sofa's menu over a page (Back or Menu on the remote), laid out as KDE's TV apps lay out their controls over what
+// plays: at the bottom, over a dark veil. On top the page's address, the tabs (when there are two or more) and "New
+// tab"; under it a row of round buttons, the name of the one in focus under the row. It opens on the button used last
+// (Home the first time); Back closes it. OK on another tab switches to it; OK on the tab in sight, or OK held on any
+// tab, asks which tabs to close. A button that can't be used now (Back with no page behind) stays in its place,
+// greyed, so the focus never jumps.
 
 import QtQuick
-import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.bigscreen.ui as BigscreenUI
 
 FocusScope {
     id: menu
@@ -33,6 +36,8 @@ FocusScope {
     signal closeRequested()
 
     property string lastFocused: "home"
+    // How far up the panel reaches, for notices shown over it.
+    readonly property real panelHeight: panel.height + panel.anchors.bottomMargin
 
     function show() {
         const all = buttonRow.buttons();
@@ -43,8 +48,8 @@ FocusScope {
         }
     }
 
-    Keys.onBackPressed: menu.closeRequested()
-    Keys.onEscapePressed: menu.closeRequested()
+    BigscreenUI.BackHandler.enabled: visible
+    BigscreenUI.BackHandler.onActivated: menu.closeRequested()
     Keys.onMenuPressed: menu.closeRequested()
 
     // Pressing outside the panel closes the menu (a mouse or a touch screen).
@@ -53,14 +58,12 @@ FocusScope {
     }
 
     Rectangle {
-        anchors.fill: panel
-        anchors.margins: -Kirigami.Units.gridUnit
-        color: Kirigami.Theme.backgroundColor
-        opacity: 0.96
-        radius: Kirigami.Units.cornerRadius * 3
-
-        // Taps on the panel itself don't close the menu.
-        TapHandler {}
+        anchors.fill: parent
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.35) }
+            GradientStop { position: 0.45; color: Qt.rgba(0, 0, 0, 0.75) }
+            GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.95) }
+        }
     }
 
     ColumnLayout {
@@ -68,59 +71,48 @@ FocusScope {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.margins: Kirigami.Units.gridUnit * 2
+        anchors.leftMargin: BigscreenUI.Units.horizontalScreenMarginFor(menu.width)
+        anchors.rightMargin: BigscreenUI.Units.horizontalScreenMarginFor(menu.width)
+        anchors.bottomMargin: BigscreenUI.Units.verticalScreenMarginFor(menu.height)
         spacing: Kirigami.Units.gridUnit
+        // Light text and controls over the dark veil, whatever the colour scheme.
+        Kirigami.Theme.colorSet: Kirigami.Theme.Complementary
+        Kirigami.Theme.inherit: false
+
+        // Taps on the panel itself don't close the menu.
+        TapHandler {}
 
         RowLayout {
             id: strip
             Layout.fillWidth: true
             spacing: Kirigami.Units.largeSpacing
 
-            Pressable {
-                id: addressPill
-                Layout.preferredWidth: menu.tabs.length > 1 ? Kirigami.Units.gridUnit * 18 : Kirigami.Units.gridUnit * 30
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 2.5
+            BigscreenUI.Button {
+                id: addressButton
+                Layout.preferredWidth: menu.tabs.length > 1 ? Kirigami.Units.gridUnit * 18 : Kirigami.Units.gridUnit * 34
+                Layout.maximumWidth: strip.width - newTabChip.width - strip.spacing
+                icon.name: menu.privateMode ? "view-private" : "search"
+                text: menu.address
                 Accessible.name: qsTr("Address: %1").arg(menu.address)
                 Keys.onDownPressed: menu.show()
-                onActivated: menu.action("address")
                 Keys.onRightPressed: chips.count > 0 ? chips.focusAt(0) : newTabChip.forceActiveFocus()
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: height / 2
-                    color: addressPill.activeFocus ? Kirigami.Theme.highlightColor : Kirigami.Theme.alternateBackgroundColor
-                }
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: Kirigami.Units.gridUnit
-                    anchors.rightMargin: Kirigami.Units.gridUnit
-                    Kirigami.Icon {
-                        source: menu.privateMode ? "view-private" : "search"
-                        Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                        Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                        color: addressPill.activeFocus ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.disabledTextColor
-                        isMask: true
-                    }
-                    QQC2.Label {
-                        Layout.fillWidth: true
-                        text: menu.address
-                        elide: Text.ElideRight
-                        color: addressPill.activeFocus ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
-                    }
-                }
+                onClicked: menu.action("address")
             }
 
             ListView {
                 id: chips
                 Layout.fillWidth: true
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 2.5
+                Layout.preferredHeight: newTabChip.implicitHeight
                 orientation: ListView.Horizontal
-                spacing: Kirigami.Units.smallSpacing
+                spacing: Kirigami.Units.largeSpacing
                 clip: true
                 visible: menu.tabs.length > 1
                 model: menu.tabs.length > 1 ? menu.tabs : []
                 keyNavigationEnabled: true
                 boundsBehavior: Flickable.StopAtBounds
+                highlightRangeMode: ListView.ApplyRange
+                preferredHighlightBegin: Kirigami.Units.gridUnit
+                preferredHighlightEnd: width - Kirigami.Units.gridUnit
                 Accessible.role: Accessible.PageTabList
                 Accessible.name: qsTr("Tabs")
 
@@ -130,39 +122,31 @@ FocusScope {
                     forceActiveFocus();
                 }
 
-                Keys.onLeftPressed: event => currentIndex > 0 ? decrementCurrentIndex() : addressPill.forceActiveFocus()
-                Keys.onRightPressed: event => currentIndex < count - 1 ? incrementCurrentIndex() : newTabChip.forceActiveFocus()
-                Keys.onDownPressed: buttonRow.focusNear()
+                Keys.onLeftPressed: currentIndex > 0 ? decrementCurrentIndex() : addressButton.forceActiveFocus()
+                Keys.onRightPressed: currentIndex < count - 1 ? incrementCurrentIndex() : newTabChip.forceActiveFocus()
+                Keys.onDownPressed: menu.show()
 
-                delegate: Pressable {
+                delegate: BigscreenUI.Chip {
                     id: chip
                     required property var modelData
                     required property int index
-                    width: Math.min(Kirigami.Units.gridUnit * 10, Math.max(Kirigami.Units.gridUnit * 5, label.implicitWidth + Kirigami.Units.gridUnit * 2))
-                    height: ListView.view.height
+                    width: Math.min(Kirigami.Units.gridUnit * 12, implicitWidth)
                     focus: ListView.isCurrentItem
-                    holdable: true
+                    // The tab in sight is marked.
+                    checked: modelData.current
+                    text: modelData.name
                     Accessible.role: Accessible.PageTab
                     Accessible.name: modelData.current ? qsTr("%1, in sight").arg(modelData.name) : modelData.name
-                    onActivated: modelData.current ? menu.tabHeld(modelData.id) : menu.tabChosen(modelData.id)
-                    onHeld: menu.tabHeld(modelData.id)
+                    onClicked: modelData.current ? menu.tabHeld(modelData.id) : menu.tabChosen(modelData.id)
+                    onPressAndHold: menu.tabHeld(modelData.id)
+                    Keys.onMenuPressed: menu.tabHeld(modelData.id)
 
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: height / 2
-                        color: chip.activeFocus ? Kirigami.Theme.highlightColor : Kirigami.Theme.alternateBackgroundColor
-                        border.width: chip.modelData.current ? 3 : 0
-                        border.color: Kirigami.Theme.highlightColor
-                    }
-                    QQC2.Label {
-                        id: label
-                        anchors.centerIn: parent
-                        width: parent.width - Kirigami.Units.gridUnit
+                    contentItem: BigscreenUI.Label {
+                        text: chip.text
                         horizontalAlignment: Text.AlignHCenter
-                        text: chip.modelData.name
                         // Two pages of one site differ at the end of their address: the middle goes.
                         elide: Text.ElideMiddle
-                        color: chip.activeFocus ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                        Accessible.ignored: true
                     }
                 }
             }
@@ -172,35 +156,13 @@ FocusScope {
                 Layout.fillWidth: true
             }
 
-            Pressable {
+            BigscreenUI.Button {
                 id: newTabChip
-                Layout.preferredWidth: newTabLabel.implicitWidth + Kirigami.Units.gridUnit * 3
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 2.5
-                Accessible.name: qsTr("New tab")
+                icon.name: "tab-new"
+                text: qsTr("New tab")
                 Keys.onDownPressed: menu.show()
-                Keys.onLeftPressed: chips.count > 0 ? chips.focusAt(chips.count - 1) : addressPill.forceActiveFocus()
-                onActivated: menu.action("newTab")
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: height / 2
-                    color: newTabChip.activeFocus ? Kirigami.Theme.highlightColor : Kirigami.Theme.alternateBackgroundColor
-                }
-                RowLayout {
-                    anchors.centerIn: parent
-                    Kirigami.Icon {
-                        source: "tab-new"
-                        Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                        Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                        color: newTabChip.activeFocus ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
-                        isMask: true
-                    }
-                    QQC2.Label {
-                        id: newTabLabel
-                        text: qsTr("New tab")
-                        color: newTabChip.activeFocus ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
-                    }
-                }
+                Keys.onLeftPressed: chips.count > 0 ? chips.focusAt(chips.count - 1) : addressButton.forceActiveFocus()
+                onClicked: menu.action("newTab")
             }
         }
 
@@ -213,22 +175,24 @@ FocusScope {
             contentHeight: buttonRow.height
             interactive: contentWidth > width
             boundsBehavior: Flickable.StopAtBounds
-            clip: true
+            // Room for the focused button's outline.
+            leftMargin: Kirigami.Units.smallSpacing
+            rightMargin: Kirigami.Units.smallSpacing
 
             function reveal(item) {
                 const left = item.x - Kirigami.Units.gridUnit;
                 const right = item.x + item.width + Kirigami.Units.gridUnit;
                 if (left < contentX) {
-                    contentX = Math.max(0, left);
+                    contentX = Math.max(-leftMargin, left);
                 } else if (right > contentX + width) {
-                    contentX = Math.min(contentWidth - width, right - width);
+                    contentX = Math.min(contentWidth + rightMargin - width, right - width);
                 }
             }
 
             Row {
                 id: buttonRow
                 x: Math.max(0, (buttonScroller.width - width) / 2)
-                spacing: Kirigami.Units.smallSpacing
+                spacing: Kirigami.Units.largeSpacing * 2
 
                 function buttons() {
                     const out = [];
@@ -240,12 +204,7 @@ FocusScope {
                     return out;
                 }
 
-                // Down from the strip: the last button used.
-                function focusNear() {
-                    menu.show();
-                }
-
-                Keys.onUpPressed: addressPill.forceActiveFocus()
+                Keys.onUpPressed: addressButton.forceActiveFocus()
                 Keys.onLeftPressed: step(-1)
                 Keys.onRightPressed: step(1)
                 function step(delta) {
@@ -256,59 +215,73 @@ FocusScope {
                     }
                 }
 
-                component MenuButton: IconButton {
+                component MenuButton: BigscreenUI.RoundButton {
+                    // Greyed out and skipped by OK, but it can still take focus, so focus never jumps.
+                    property bool available: true
+                    opacity: available ? 1 : 0.4
+                    Accessible.name: text
                     onActiveFocusChanged: if (activeFocus) {
                         menu.lastFocused = objectName;
                         buttonScroller.reveal(this);
                     }
-                    onActivated: if (available) menu.action(objectName)
+                    onClicked: if (available) menu.action(objectName)
                 }
 
-                MenuButton { objectName: "home"; iconName: "go-home"; text: qsTr("Home") }
-                MenuButton { objectName: "back"; iconName: "go-previous"; text: qsTr("Back"); available: menu.canGoBack }
-                MenuButton { objectName: "forward"; iconName: "go-next"; text: qsTr("Forward"); available: menu.canGoForward }
-                MenuButton { objectName: "reload"; iconName: "view-refresh"; text: qsTr("Reload") }
+                MenuButton { objectName: "home"; icon.name: "go-home"; text: qsTr("Home") }
+                MenuButton { objectName: "back"; icon.name: "go-previous"; text: qsTr("Back"); available: menu.canGoBack }
+                MenuButton { objectName: "forward"; icon.name: "go-next"; text: qsTr("Forward"); available: menu.canGoForward }
+                MenuButton { objectName: "reload"; icon.name: "view-refresh"; text: qsTr("Reload") }
                 MenuButton {
                     objectName: "bookmark"
-                    iconName: menu.bookmarked ? "starred-symbolic" : "non-starred-symbolic"
+                    icon.name: menu.bookmarked ? "starred-symbolic" : "non-starred-symbolic"
                     text: menu.bookmarked ? qsTr("Bookmarked") : qsTr("Bookmark")
                     checked: menu.bookmarked
                 }
-                MenuButton { objectName: "pin"; iconName: "list-add"; text: qsTr("Add to start page") }
-                MenuButton { objectName: "bookmarks"; iconName: "bookmarks"; text: qsTr("Bookmarks") }
-                MenuButton { objectName: "history"; iconName: "view-history"; text: qsTr("History") }
+                MenuButton { objectName: "pin"; icon.name: "list-add"; text: qsTr("Add to start page") }
+                MenuButton { objectName: "bookmarks"; icon.name: "bookmarks"; text: qsTr("Bookmarks") }
+                MenuButton { objectName: "history"; icon.name: "view-history"; text: qsTr("History") }
                 MenuButton {
                     objectName: "adblock"
-                    iconName: menu.adBlockOn ? "security-high" : "security-low"
-                    // The state shows in the icon and the tint: "Ad block: off" doesn't fit under the button.
-                    text: qsTr("Ad block")
-                    Accessible.name: menu.adBlockOn ? qsTr("Ad blocking on for this site") : qsTr("Ad blocking off for this site")
+                    icon.name: menu.adBlockOn ? "security-high" : "security-low"
+                    text: menu.adBlockOn ? qsTr("Ad blocking: on for this site") : qsTr("Ad blocking: off for this site")
                     checked: menu.adBlockOn
                     available: menu.webPage
                 }
                 MenuButton {
                     objectName: "allowOnce"
-                    iconName: "window-new"
-                    text: qsTr("Allow once")
-                    Accessible.name: qsTr("Open the pop-up or redirect just blocked")
+                    icon.name: "window-new"
+                    text: qsTr("Allow once: open the pop-up or redirect just blocked")
                     visible: menu.allowPending
                 }
                 MenuButton {
                     objectName: "pointer"
-                    iconName: "input-mouse"
+                    icon.name: "input-mouse"
                     text: menu.pointerOn ? qsTr("Pointer: on") : qsTr("Pointer: off")
                     checked: menu.pointerOn
                 }
-                MenuButton { objectName: "zoomOut"; iconName: "zoom-out"; text: qsTr("Smaller") }
+                MenuButton { objectName: "zoomOut"; icon.name: "zoom-out"; text: qsTr("Smaller") }
                 MenuButton {
                     objectName: "zoomReset"
-                    iconName: "zoom-original"
-                    text: Math.round(menu.zoom * 100) + " %"
-                    Accessible.name: qsTr("Zoom %1 percent, press to reset").arg(Math.round(menu.zoom * 100))
+                    icon.name: "zoom-original"
+                    text: qsTr("Zoom %1 %: press to reset").arg(Math.round(menu.zoom * 100))
                 }
-                MenuButton { objectName: "zoomIn"; iconName: "zoom-in"; text: qsTr("Larger") }
-                MenuButton { objectName: "settings"; iconName: "settings-configure"; text: qsTr("Settings") }
+                MenuButton { objectName: "zoomIn"; icon.name: "zoom-in"; text: qsTr("Larger") }
+                MenuButton { objectName: "settings"; icon.name: "settings-configure"; text: qsTr("Settings") }
             }
+        }
+
+        // The name of the round button in focus, as KDE's TV apps show it.
+        BigscreenUI.Label {
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            text: {
+                const item = menu.Window.activeFocusItem;
+                return item instanceof BigscreenUI.RoundButton && item.parent === buttonRow ? item.text : "";
+            }
+            // Keeps its height when empty, so nothing moves.
+            opacity: text.length > 0 ? 1 : 0
+            color: Kirigami.Theme.disabledTextColor
+            Accessible.ignored: true
         }
     }
 }

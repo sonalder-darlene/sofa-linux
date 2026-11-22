@@ -33,5 +33,7 @@ compatible with the GPL-3.0):
 ## Used, not included
 
 Qt (LGPL-3.0), Qt WebEngine (LGPL-3.0, with Chromium's licences), KDE's Kirigami (LGPL-2.0-or-later) and SQLite
-(public domain) come from your system or the Flatpak runtime and are not part of this source tree. Sofa reaches
+(public domain) come from your system or the Flatpak runtime and are not part of this source tree. KDE's
+[bigscreen-ui](https://invent.kde.org/libraries/bigscreen-ui) (LGPL-2.0-or-later) comes from your system when it has
+it; otherwise the build, the Flatpak and the Nix flake fetch its release tag and build it next to Sofa, unchanged. Sofa reaches
 SQLite through a short binding of its own (`core/src/sqlite.rs`).

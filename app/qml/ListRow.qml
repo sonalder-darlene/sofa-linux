@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// A row in a list (Bookmarks, History, suggestions): an icon, a title and a line under it. The row in focus takes
-// the theme's highlight.
+// A row in a list (Bookmarks, History, suggestions, choices), made of KDE's TV list row: an icon, a title and a line
+// under it. OK opens it (`activated`); OK held or Menu asks for its actions (`held`) when it has some.
 
 import QtQuick
-import QtQuick.Controls as QQC2
-import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.bigscreen.ui as BigscreenUI
 
-Pressable {
+BigscreenUI.ButtonDelegate {
     id: row
 
     property string title: ""
@@ -17,57 +16,47 @@ Pressable {
     property string iconName: ""
     // A slimmer row (the Up row in a folder), so it reads as a way out rather than an item.
     property bool slim: false
-    property string trailing: ""
+    property string trailingText: ""
+    property bool holdable: false
+    // An icon at the start: a site's (from `url` and `title`) or a theme icon. Off for plain choices.
+    property bool showIcon: true
 
-    height: slim ? Kirigami.Units.gridUnit * 2.5 : Kirigami.Units.gridUnit * 3.5
+    signal activated()
+    signal held()
+
+    text: title
+    description: detail
+    verticalPadding: slim ? Kirigami.Units.largeSpacing : BigscreenUI.Units.verticalPadding
     Accessible.name: detail !== "" ? title + ", " + detail : title
     Accessible.role: Accessible.ListItem
 
-    Rectangle {
-        anchors.fill: parent
-        radius: Kirigami.Units.cornerRadius
-        color: row.activeFocus ? Kirigami.Theme.highlightColor : "transparent"
+    // An address is one line, its middle left out when it doesn't fit.
+    descriptionItem.wrapMode: Text.NoWrap
+    descriptionItem.elide: Text.ElideMiddle
+    descriptionItem.maximumLineCount: 1
+
+    leadingPadding: showIcon ? Kirigami.Units.gridUnit : 0
+    trailingPadding: trailingText !== "" ? Kirigami.Units.gridUnit : 0
+    leading: SiteIcon {
+        visible: row.showIcon
+        implicitWidth: !row.showIcon ? 0 : row.slim ? Kirigami.Units.iconSizes.smallMedium : Kirigami.Units.iconSizes.medium
+        implicitHeight: implicitWidth
+        url: row.url
+        title: row.title
+        iconName: row.iconName
+    }
+    trailing: BigscreenUI.Label {
+        text: row.trailingText
+        color: Kirigami.Theme.disabledTextColor
     }
 
-    RowLayout {
-        anchors.fill: parent
-        anchors.leftMargin: Kirigami.Units.largeSpacing
-        anchors.rightMargin: Kirigami.Units.largeSpacing
-        spacing: Kirigami.Units.largeSpacing
-
-        SiteIcon {
-            Layout.preferredWidth: row.slim ? Kirigami.Units.iconSizes.smallMedium : Kirigami.Units.iconSizes.medium
-            Layout.preferredHeight: Layout.preferredWidth
-            url: row.url
-            title: row.title
-            iconName: row.iconName
-        }
-
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 0
-
-            QQC2.Label {
-                Layout.fillWidth: true
-                text: row.title
-                elide: Text.ElideRight
-                font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.15
-                color: row.activeFocus ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
-            }
-            QQC2.Label {
-                Layout.fillWidth: true
-                visible: row.detail !== ""
-                text: row.detail
-                elide: Text.ElideMiddle
-                font.pointSize: Kirigami.Theme.smallFont.pointSize
-                color: row.activeFocus ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.disabledTextColor
-            }
-        }
-
-        QQC2.Label {
-            visible: row.trailing !== ""
-            text: row.trailing
-            color: row.activeFocus ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.disabledTextColor
+    onClicked: activated()
+    // A long press of OK on a row without actions opens it, as a short one does.
+    onPressAndHold: holdable ? held() : activated()
+    Keys.onMenuPressed: event => {
+        event.accepted = holdable;
+        if (holdable && !event.isAutoRepeat) {
+            held();
         }
     }
 }

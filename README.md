@@ -60,7 +60,11 @@ cd sofa-linux
 **With Nix:** `nix run github:sonalder-darlene/sofa-linux`, or `nix develop` for a shell with everything the build
 needs.
 
-**Needs:** Qt 6.11 or newer with Qt WebEngine, KDE's Kirigami, SQLite, Rust, CMake, pkg-config and lld. That is
+**Needs:** Qt 6.11 or newer with Qt WebEngine, KDE's Kirigami and
+[bigscreen-ui](https://invent.kde.org/libraries/bigscreen-ui) (KDE's components for TV apps), SQLite, Rust, CMake,
+pkg-config and lld. Where the distribution has no bigscreen-ui package, the build fetches its release and builds it
+with Sofa, into a folder only Sofa uses (it then needs git and KDE's extra-cmake-modules, KI18n, KColorScheme and
+KCoreAddons, which `./sofa.sh deps` lists). That is
 Arch, openSUSE Tumbleweed, Fedora 44 or newer and Debian testing today. On a distribution with an older Qt (Debian 13,
 Ubuntu 26.04), `./sofa.sh deps` says so: use the Flatpak there, or Nix.
 
@@ -104,7 +108,8 @@ Rust crates so the build needs no network. It isn't on Flathub yet.
 
 ## How it is made
 
-- **QML and Kirigami** for the screens, so Sofa looks and behaves like a KDE app.
+- **QML on KDE's [bigscreen-ui](https://invent.kde.org/libraries/bigscreen-ui)** for the screens (the components
+  Plasma Bigscreen's own apps are made of), so Sofa looks and behaves like the rest of the TV.
 - **A Rust core** (`core/`) for everything that reads untrusted input (what you type, the addresses pages ask for,
   bookmarks files, filter lists, and later backups) and everything Sofa keeps (bookmarks, history, tabs,
   settings). It has no Qt in it and is tested on its own.

@@ -3,6 +3,7 @@
 #include "sofa/shell.h"
 #include "sofa/host.h"
 
+#include <QtCore/QDir>
 #include <QtCore/QVariantMap>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QIcon>
@@ -106,9 +107,17 @@ bool prepareEngine(QQmlApplicationEngine &engine, const QString &storageName, ru
         return false;
     }
 
-    // Outside Plasma there may be no icon theme set; Breeze (KDE's) fills in where it is installed.
+    // Outside Plasma there may be no icon theme set; Breeze (KDE's) fills in where it is installed, in its dark
+    // version: outside Plasma Sofa takes Bigscreen's dark colour scheme (KDE's TV components do it).
     if (QIcon::fallbackThemeName().isEmpty() || QIcon::fallbackThemeName() == QStringLiteral("hicolor")) {
-        QIcon::setFallbackThemeName(QStringLiteral("breeze"));
+        QIcon::setFallbackThemeName(QStringLiteral("breeze-dark"));
+    }
+
+    // KDE's TV components, when Sofa was built with its own copy of them (CMake option SOFA_BIGSCREEN_UI): they sit
+    // in a folder of Sofa's next to its binary's, which only Sofa looks in.
+    const QDir ownModules(QCoreApplication::applicationDirPath() + QStringLiteral("/../lib/sofa-tv-browser/qml"));
+    if (ownModules.exists()) {
+        engine.addImportPath(ownModules.canonicalPath());
     }
 
     // Named at construction (Qt 6.9 and newer): a profile renamed or switched to disk afterwards is on its way out.

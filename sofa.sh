@@ -60,10 +60,10 @@ os_id() {
 # on each of these in a container.
 deps_packages() {
     case "$1" in
-        arch) echo "base-devel cmake ninja rust lld sqlite qt6-base qt6-declarative qt6-webengine qt6-svg qt6-wayland kirigami qqc2-desktop-style" ;;
-        fedora) echo "cmake ninja-build gcc-c++ cargo rust lld pkgconf-pkg-config sqlite-devel qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtwebengine-devel qt6-qtsvg-devel qt6-qtwayland kf6-kirigami kf6-qqc2-desktop-style" ;;
-        debian) echo "build-essential ca-certificates cmake ninja-build cargo rustc lld pkgconf libsqlite3-dev qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-webengine-dev qt6-svg-dev qt6-svg-plugins qt6-wayland qml6-module-org-kde-kirigami qml6-module-qtwebengine qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-window qml6-module-qtquick-templates qml6-module-qtqml-workerscript qml6-module-qtquick-dialogs qml6-module-org-kde-desktop" ;;
-        opensuse) echo "cmake ninja gcc-c++ cargo lld pkgconf sqlite3-devel qt6-base-devel qt6-declarative-devel qt6-webenginequick-devel qt6-webengine-imports qt6-svg-devel qt6-wayland kf6-kirigami-imports kf6-qqc2-desktop-style" ;;
+        arch) echo "base-devel cmake ninja rust lld sqlite qt6-base qt6-declarative qt6-webengine qt6-svg qt6-wayland kirigami qqc2-desktop-style git extra-cmake-modules ki18n kcolorscheme kcoreaddons" ;;
+        fedora) echo "cmake ninja-build gcc-c++ cargo rust lld pkgconf-pkg-config sqlite-devel qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtwebengine-devel qt6-qtsvg-devel qt6-qtwayland kf6-kirigami kf6-qqc2-desktop-style git extra-cmake-modules gettext kf6-kirigami-devel kf6-ki18n-devel kf6-kcolorscheme-devel kf6-kcoreaddons-devel" ;;
+        debian) echo "build-essential ca-certificates cmake ninja-build cargo rustc lld pkgconf libsqlite3-dev qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-webengine-dev qt6-svg-dev qt6-svg-plugins qt6-wayland qml6-module-org-kde-kirigami qml6-module-qtwebengine qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-window qml6-module-qtquick-templates qml6-module-qtqml-workerscript qml6-module-qtquick-dialogs qml6-module-org-kde-desktop git extra-cmake-modules gettext libkirigami-dev libkf6i18n-dev libkf6colorscheme-dev libkf6coreaddons-dev" ;;
+        opensuse) echo "cmake ninja gcc-c++ cargo lld pkgconf sqlite3-devel qt6-base-devel qt6-declarative-devel qt6-webenginequick-devel qt6-webengine-imports qt6-svg-devel qt6-wayland kf6-kirigami-imports kf6-qqc2-desktop-style git kf6-extra-cmake-modules gettext-tools kf6-kirigami-devel kf6-ki18n-devel kf6-kcolorscheme-devel kf6-kcoreaddons-devel" ;;
         *) return 1 ;;
     esac
 }
@@ -140,7 +140,7 @@ cmd_deps() {
             ;;
     esac
     local cmd
-    cmd="$(deps_command "$os" "$yes")" || die "I don't know this distribution's package names. You need: CMake, Ninja, a C++ compiler, Rust (cargo), lld, pkg-config, SQLite, Qt $QT_MIN or newer (Base, Declarative, WebEngine, Svg, Wayland) and KDE's Kirigami. Or use the Flatpak: ./sofa.sh flatpak"
+    cmd="$(deps_command "$os" "$yes")" || die "I don't know this distribution's package names. You need: CMake, Ninja, a C++ compiler, Rust (cargo), lld, pkg-config, SQLite, Qt $QT_MIN or newer (Base, Declarative, WebEngine, Svg, Wayland), git, and KDE's extra-cmake-modules, Kirigami, KI18n, KColorScheme and KCoreAddons (for building KDE's TV components, bigscreen-ui, with Sofa). Or use the Flatpak: ./sofa.sh flatpak"
     if $install; then
         local refresh; refresh="$(deps_refresh_command "$os")"
         if [[ -n $refresh ]]; then
@@ -205,6 +205,10 @@ cmd_run() {
     local fresh=false
     if [[ "${1:-}" == "--fresh" ]]; then fresh=true; shift; fi
     [[ -x "$(built_binary)" ]] || cmd_build
+    # KDE's TV components built with Sofa (when the system has none) stay in the build folder until installed.
+    if [[ -d "$BUILD_DIR/bin/org/kde/bigscreen/ui" ]]; then
+        export QML_IMPORT_PATH="$BUILD_DIR/bin${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"
+    fi
     if $fresh; then
         local tmp; tmp="$(mktemp -d -t sofa-fresh.XXXXXX)"
         trap 'rm -rf "$tmp"' EXIT

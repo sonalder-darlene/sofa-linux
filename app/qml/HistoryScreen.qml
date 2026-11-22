@@ -4,12 +4,12 @@
 // Delete all. Private browsing adds nothing here.
 
 import QtQuick
-import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.bigscreen.ui as BigscreenUI
 import Sofa
 
-FocusScope {
+BigscreenUI.Page {
     id: screen
 
     property var visits: []
@@ -42,81 +42,88 @@ FocusScope {
         }
     }
 
-    Keys.onBackPressed: screen.back()
-    Keys.onEscapePressed: screen.back()
+    background: BigscreenUI.AmbientBackground {}
 
-    Rectangle {
-        anchors.fill: parent
-        color: Kirigami.Theme.backgroundColor
-    }
+    BigscreenUI.BackHandler.enabled: visible
+    BigscreenUI.BackHandler.onActivated: screen.back()
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: Kirigami.Units.gridUnit * 2
-        anchors.leftMargin: Kirigami.Units.gridUnit * 3
-        anchors.rightMargin: Kirigami.Units.gridUnit * 3
+        anchors.leftMargin: screen.contentMargins.left
+        anchors.rightMargin: screen.contentMargins.right
+        anchors.topMargin: screen.contentMargins.top
         spacing: Kirigami.Units.gridUnit
 
         RowLayout {
             Layout.fillWidth: true
+            spacing: Kirigami.Units.gridUnit
 
-            Kirigami.Heading {
+            BigscreenUI.Label {
                 Layout.fillWidth: true
-                level: 1
                 text: qsTr("History")
+                type: BigscreenUI.Label.Title
                 Accessible.role: Accessible.Heading
             }
-
-            TextButton {
+            BigscreenUI.Button {
                 id: deleteAllButton
                 visible: screen.visits.length > 0
+                icon.name: "edit-delete"
                 text: qsTr("Delete all")
-                iconName: "edit-delete"
                 Keys.onDownPressed: list.forceActiveFocus()
-                onActivated: choice.ask(qsTr("Delete all of History?"), "",
-                                        [{ text: qsTr("Cancel"), value: false }, { text: qsTr("Delete all"), value: true }],
-                                        yes => {
-                                            if (yes) {
-                                                Library.clearHistory();
-                                                screen.load(0);
-                                            }
-                                        }, 0)
+                onClicked: choice.ask(qsTr("Delete all of History?"), "",
+                                      [{ text: qsTr("Cancel"), value: false }, { text: qsTr("Delete all"), value: true }],
+                                      yes => {
+                                          if (yes) {
+                                              Library.clearHistory();
+                                              screen.load(0);
+                                          }
+                                      }, 0)
             }
         }
 
-        QQC2.Label {
+        BigscreenUI.PlaceholderMessage {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: Kirigami.Units.gridUnit * 4
+            Layout.preferredWidth: implicitWidth
             visible: screen.visits.length === 0
-            Layout.fillWidth: true
-            wrapMode: Text.Wrap
-            color: Kirigami.Theme.disabledTextColor
-            text: qsTr("No history. Pages you open show here, kept on this computer only.")
+            iconName: "view-history"
+            text: qsTr("No history")
+            explanation: qsTr("Pages you open show here, kept on this computer only.")
         }
 
         ListView {
             id: list
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // The focused row's outline needs a little room at the sides.
+            Layout.leftMargin: -Kirigami.Units.smallSpacing
+            Layout.rightMargin: -Kirigami.Units.smallSpacing
+            visible: screen.visits.length > 0
             model: screen.visits
             keyNavigationEnabled: true
             clip: true
             spacing: Kirigami.Units.smallSpacing
             reuseItems: true
+            boundsBehavior: Flickable.StopAtBounds
             highlightRangeMode: ListView.ApplyRange
             preferredHighlightBegin: Kirigami.Units.gridUnit * 3
             preferredHighlightEnd: height - Kirigami.Units.gridUnit * 3
+            bottomMargin: screen.contentMargins.bottom
             Accessible.role: Accessible.List
             Accessible.name: qsTr("History")
-            Keys.onUpPressed: event => currentIndex <= 0 ? deleteAllButton.forceActiveFocus() : decrementCurrentIndex()
+
+            Keys.onUpPressed: currentIndex <= 0 ? deleteAllButton.forceActiveFocus() : decrementCurrentIndex()
 
             section.property: "day"
-            section.delegate: Kirigami.Heading {
+            section.delegate: BigscreenUI.Label {
                 required property string section
                 width: ListView.view.width
-                level: 3
                 text: section
+                type: BigscreenUI.Label.Heading
                 color: Kirigami.Theme.disabledTextColor
-                topPadding: Kirigami.Units.largeSpacing
+                topPadding: Kirigami.Units.gridUnit
                 bottomPadding: Kirigami.Units.smallSpacing
+                leftPadding: Kirigami.Units.smallSpacing
                 Accessible.role: Accessible.Heading
             }
 
@@ -129,7 +136,7 @@ FocusScope {
                 title: modelData.title !== "" ? modelData.title : modelData.url
                 detail: modelData.url
                 url: modelData.url
-                trailing: modelData.time
+                trailingText: modelData.time
                 onActivated: screen.openUrl(modelData.url)
                 onHeld: choice.ask(title, "", [{ text: qsTr("Delete"), value: true }], () => {
                     Library.removeVisit(modelData.id);

@@ -37,6 +37,17 @@ build-options:
 cleanup-commands:
   - /app/cleanup-BaseApp.sh
 modules:
+  # KDE's components for TV apps (Sofa's screens are made of them), from its release tag; the KDE runtime has the
+  # frameworks it needs.
+  - name: bigscreen-ui
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      - type: git
+        url: https://invent.kde.org/libraries/bigscreen-ui.git
+        tag: v0.1.0
+        commit: 2ab509c16a38ab87a066a35aeb3e7aa4c4cafe5a
   - name: sofa
     buildsystem: cmake-ninja
     config-opts:
