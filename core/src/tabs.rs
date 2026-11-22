@@ -142,6 +142,17 @@ impl<T: Copy + Eq + Hash> TabList<T> {
             .map(|t| (self.left_at.get(&t).copied().unwrap_or(now) + rest_ms - now).max(0))
             .min()
     }
+
+    /// The tab `steps` places from the one in sight in strip order (negative: to the left), going round at the ends:
+    /// where the keyboard's next and previous tab go. `None` only while the list is empty.
+    #[must_use]
+    pub fn neighbour(&self, steps: isize) -> Option<T> {
+        let len = isize::try_from(self.order.len()).ok().filter(|n| *n > 0)?;
+        let here = self.current().and_then(|c| self.order.iter().position(|t| *t == c))?;
+        let here = isize::try_from(here).ok()?;
+        let at = usize::try_from((here + steps).rem_euclid(len)).ok()?;
+        self.order.get(at).copied()
+    }
 }
 
 /// The names of the strip's chips, in order, for tabs of these `titles` and `addresses`: the title, else the short
@@ -255,6 +266,26 @@ mod tests {
         let mut l = list(3);
         l.add(9, Some(0), 0);
         assert_eq!(l.items(), [0, 9, 1, 2]);
+    }
+
+    #[test]
+    fn next_and_previous_tab_go_round_the_strip() {
+        let mut l = list(3);
+        l.add(9, Some(0), 0);
+        l.select(9, 0);
+        assert_eq!(l.neighbour(1), Some(1));
+        assert_eq!(l.neighbour(-1), Some(0));
+        l.select(2, 0);
+        assert_eq!(l.neighbour(1), Some(0), "past the last tab comes the first");
+        l.select(0, 0);
+        assert_eq!(l.neighbour(-1), Some(2), "before the first tab comes the last");
+        assert_eq!(l.neighbour(0), Some(0));
+    }
+
+    #[test]
+    fn a_lone_tab_is_its_own_neighbour_and_an_empty_list_has_none() {
+        assert_eq!(list(1).neighbour(1), Some(0));
+        assert_eq!(list(0).neighbour(1), None);
     }
 
     #[test]

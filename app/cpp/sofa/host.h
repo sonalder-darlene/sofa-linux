@@ -29,6 +29,8 @@ class Host final : public QObject
     // False while Sofa's window can't be seen: behind Bigscreen's home or another app the compositor hides it from,
     // minimized, or on another desktop. Losing the keyboard focus to a window beside it doesn't count.
     Q_PROPERTY(bool windowShown READ windowShown NOTIFY windowShownChanged)
+    // While true, the system's pointer is hidden over Sofa's windows (Sofa's own pointer is the one in use).
+    Q_PROPERTY(bool hideCursor READ hideCursor WRITE setHideCursor NOTIFY hideCursorChanged)
 
 public:
     // `pageScript` runs at the start of every frame of every page, in a world the page's own scripts can't reach
@@ -40,6 +42,8 @@ public:
     bool typing() const { return m_typing; }
     void setTyping(bool on);
     bool windowShown() const { return m_windowShown; }
+    bool hideCursor() const { return m_hideCursor; }
+    void setHideCursor(bool on);
 
     // A new profile for one private browsing session: kept in memory only, with the same request rules as the
     // default one. endPrivateProfile() lets go of it once no page uses it.
@@ -69,23 +73,35 @@ Q_SIGNALS:
     // A remote key while remoteKeys is on; `key` is the Qt::Key, `pressed` false on release. Repeats are left out:
     // the pointer runs on its own clock between press and release.
     void remoteKey(int key, bool pressed);
+    // A real pointer was used over the window (a mouse, a touchpad, a pad's stick that the system turns into one, a
+    // touch): it moved, pressed or scrolled at (x, y) in the window. The events themselves still go to what is under
+    // it; this only tells Sofa's own pointer to step aside. Sofa's own events (mouse(), wheel()) never count.
+    void realPointer(qreal x, qreal y);
     // Something was pressed that may reach the page in front: a click (the pointer's too), a touch, or a key that
     // activates what has focus. The pop-up rules count presses; what the press landed on the page says itself.
     void pressed();
     void windowShownChanged();
+    void hideCursorChanged();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     bool isPress(QEvent *event) const;
+    void noticeRealPointer(QEvent *event);
 
     QWebEngineUrlRequestInterceptor *m_interceptor;
     QString m_pageScript;
     bool m_remoteKeys = false;
     bool m_typing = false;
     bool m_windowShown = true;
+    bool m_hideCursor = false;
     Qt::MouseButtons m_buttons = Qt::NoButton;
+    // While Sofa sends its own mouse or wheel event.
+    bool m_sending = false;
+    // Where the real pointer was last seen; none until the first event.
+    QPointF m_realAt;
+    bool m_realSeen = false;
 };
 
 // The standard interface a desktop app answers on the session bus (what DBusActivatable launchers call): another
@@ -103,24 +119,38 @@ public:
     }
 
 public Q_SLOTS:
-    Q_SCRIPTABLE void Activate(const QVariantMap &)
+    Q_SCRIPTABLE void Activate(const QVariantMap &platformData)
     {
+        takeToken(platformData);
         Q_EMIT m_host->openRequested(QString());
     }
 
-    Q_SCRIPTABLE void Open(const QStringList &uris, const QVariantMap &)
+    Q_SCRIPTABLE void Open(const QStringList &uris, const QVariantMap &platformData)
     {
+        takeToken(platformData);
         for (const QString &uri : uris) {
             Q_EMIT m_host->openRequested(uri);
         }
     }
 
-    Q_SCRIPTABLE void ActivateAction(const QString &, const QVariantList &, const QVariantMap &)
+    Q_SCRIPTABLE void ActivateAction(const QString &, const QVariantList &, const QVariantMap &platformData)
     {
+        takeToken(platformData);
         Q_EMIT m_host->openRequested(QString());
     }
 
 private:
+    // The launch that called carries the compositor's permission to bring a window to the front (an XDG activation
+    // token, given to whatever the user started). Qt's Wayland support uses it on the next requestActivate(), which
+    // openRequested() leads to; without it KWin keeps Sofa behind (focus-stealing prevention).
+    static void takeToken(const QVariantMap &platformData)
+    {
+        const QByteArray token = platformData.value(QStringLiteral("activation-token")).toString().toUtf8();
+        if (!token.isEmpty()) {
+            qputenv("XDG_ACTIVATION_TOKEN", token);
+        }
+    }
+
     Host *m_host;
 };
 

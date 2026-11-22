@@ -125,6 +125,10 @@ pub mod qobject {
         fn is_full(&self) -> bool;
         #[qinvokable]
         fn count(&self) -> i32;
+        /// The tab `steps` places from the one in sight in strip order, going round at the ends (Ctrl+Tab and
+        /// Ctrl+Shift+Tab); -1 while there are none.
+        #[qinvokable]
+        fn neighbour(&self, steps: i32) -> i32;
         /// Of the loaded tabs out of sight (`live`: JSON array of ids), those to unload: past the `keep` most recent,
         /// or out of sight for ten minutes. A JSON array.
         #[qinvokable]
@@ -386,6 +390,10 @@ impl qobject::TabOrder {
 
     fn count(&self) -> i32 {
         i32::try_from(self.list.len()).unwrap_or(i32::MAX)
+    }
+
+    fn neighbour(&self, steps: i32) -> i32 {
+        isize::try_from(steps).ok().and_then(|s| self.list.neighbour(s)).unwrap_or(-1)
     }
 
     fn to_unload(&self, keep: i32, live: &QString) -> QString {

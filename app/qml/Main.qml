@@ -82,12 +82,22 @@ T.ApplicationWindow {
                && root.currentView !== null && !root.currentView.isFullScreen
     }
 
+    // No second pointer on screen: the system's hides while the remote drives Sofa's over a page, until a real
+    // pointer is used again.
+    Binding {
+        target: root.host
+        property: "hideCursor"
+        value: pointer.driving && pageLayer.visible && root.pointerOn
+    }
+
     Connections {
         target: root.host
         // A press that may reach the page in front: its tab's pop-up rules count it.
         function onPressed() {
             if (root.screen === "page" && root.currentView) {
                 root.currentView.guard.press();
+                // Into a text field or out of one: a keyboard's Return then goes to the page, or not.
+                pointer.checkTyping();
             }
         }
         // Back from Bigscreen's home (or wherever the window was hidden): the page in sight takes the keys again.
@@ -121,9 +131,15 @@ T.ApplicationWindow {
                 if (pressed) root.openMenu();
             } else if (key === Qt.Key_HomePage) {
                 if (pressed) root.goHome();
+            } else if (key === Qt.Key_Forward) {
+                if (pressed) root.pageForward();
             } else {
                 pointer.key(key, pressed);
             }
+        }
+        // A mouse, touchpad or a pad's stick: Sofa's pointer steps aside until the next arrow.
+        function onRealPointer(x, y) {
+            pointer.realUsed(x, y);
         }
     }
 
@@ -430,15 +446,49 @@ T.ApplicationWindow {
         }
     }
 
-    // Back on a page: leave full screen, then scroll mode, else Sofa's menu.
+    // Back on a page: leave a text field (the on-screen keyboard goes with it), then full screen, then scroll mode,
+    // else Sofa's menu. Bigscreen's own browser goes the same way.
     function pageBack() {
-        if (currentView && currentView.isFullScreen) {
+        if (currentView && (host.typing || host.editing())) {
+            host.typing = false;
+            currentView.leaveField();
+        } else if (currentView && currentView.isFullScreen) {
             currentView.fullScreenCancelled();
         } else if (pointer.scrollMode) {
             pointer.setScrollMode(false);
         } else {
             openMenu();
         }
+    }
+
+    // Back and Forward a page, for a keyboard (Alt+Left, Alt+Right) and a remote's or pad's Forward.
+    function pageHistory(forward) {
+        const view = screen === "page" ? currentView : null;
+        if (view && (forward ? view.canGoForward : view.canGoBack)) {
+            forward ? view.goForward() : view.goBack();
+        }
+    }
+
+    function pageForward() {
+        pageHistory(true);
+    }
+
+    // The next tab (`steps` 1) or the one before (-1) in the strip, going round at the ends.
+    function stepTab(steps) {
+        const id = order.neighbour(steps);
+        if (id >= 0 && id !== currentId) {
+            selectTab(id);
+            showCurrent();
+        }
+    }
+
+    // Zoom from the keyboard, as the menu's buttons do, with a notice since nothing else shows it.
+    function keyZoom(action) {
+        if (!currentView) {
+            return;
+        }
+        menuAction(action);
+        notify(qsTr("Zoom %1 %").arg(Math.round(currentView.zoomFactor * 100)));
     }
 
     // Back on the start page: the page behind it; else close an empty tab next to others (a New tab nobody used);
@@ -678,14 +728,73 @@ T.ApplicationWindow {
         onActivated: root.pageBack()
     }
     Shortcut {
-        sequences: ["Menu", "Ctrl+L", "F6"]
+        sequence: "Menu"
         enabled: root.screen === "page" && !root.menuShown && !root.host.remoteKeys
         onActivated: root.openMenu()
+    }
+    Shortcut {
+        sequence: "Forward"
+        enabled: root.screen === "page" && !root.host.remoteKeys
+        onActivated: root.pageForward()
     }
     Shortcut {
         sequences: [StandardKey.Refresh]
         enabled: root.screen === "page" && root.currentView !== null
         onActivated: root.currentView.reload()
+    }
+
+    // A keyboard's shortcuts, as in desktop browsers. On a page or the start page, never over a dialog.
+    readonly property bool shortcutsOn: (screen === "page" || screen === "start") && !dialogOpen
+    Shortcut {
+        sequences: ["Ctrl+L", "F6"]
+        enabled: root.shortcutsOn
+        onActivated: root.screen === "page" ? root.menuAction("address") : startPage.search()
+    }
+    Shortcut {
+        sequence: "Ctrl+T"
+        enabled: root.shortcutsOn
+        onActivated: root.newTab()
+    }
+    Shortcut {
+        sequence: "Ctrl+W"
+        enabled: root.shortcutsOn
+        onActivated: root.closeTabs([root.currentId])
+    }
+    Shortcut {
+        sequences: ["Ctrl+Tab", "Ctrl+PgDown"]
+        enabled: root.shortcutsOn
+        onActivated: root.stepTab(1)
+    }
+    Shortcut {
+        // Shift+Tab arrives as Backtab, with or without Shift among the modifiers.
+        sequences: ["Ctrl+Shift+Tab", "Ctrl+Shift+Backtab", "Ctrl+Backtab", "Ctrl+PgUp"]
+        enabled: root.shortcutsOn
+        onActivated: root.stepTab(-1)
+    }
+    Shortcut {
+        sequence: "Alt+Left"
+        enabled: root.shortcutsOn && root.screen === "page"
+        onActivated: root.pageHistory(false)
+    }
+    Shortcut {
+        sequence: "Alt+Right"
+        enabled: root.shortcutsOn && root.screen === "page"
+        onActivated: root.pageHistory(true)
+    }
+    Shortcut {
+        sequences: ["Ctrl++", "Ctrl+=", "Ctrl+Shift+=", "Ctrl+Num++"]
+        enabled: root.shortcutsOn && root.screen === "page"
+        onActivated: root.keyZoom("zoomIn")
+    }
+    Shortcut {
+        sequences: ["Ctrl+-", "Ctrl+Num+-"]
+        enabled: root.shortcutsOn && root.screen === "page"
+        onActivated: root.keyZoom("zoomOut")
+    }
+    Shortcut {
+        sequences: ["Ctrl+0", "Ctrl+Num+0"]
+        enabled: root.shortcutsOn && root.screen === "page"
+        onActivated: root.keyZoom("zoomReset")
     }
 
     // --- What is on screen ----------------------------------------------------------------------------------------
@@ -768,6 +877,19 @@ T.ApplicationWindow {
             function reloadQuietly() {
                 quietLoad = true;
                 reload();
+            }
+
+            // Takes the focus out of the page's text field (in whichever frame it is), so the on-screen keyboard
+            // hides and the remote's keys mean the pointer again.
+            function leaveField() {
+                const script = "{ const e = document.activeElement; if (e && e !== document.body && (e.isContentEditable"
+                             + " || /^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName))) e.blur(); }";
+                const frames = [mainFrame];
+                while (frames.length > 0) {
+                    const frame = frames.pop();
+                    frame.runJavaScript(script, WebEngineScript.ApplicationWorld, () => {});
+                    frames.push(...frame.children);
+                }
             }
 
             // Stops what the page plays: every <video> and <audio> in every frame, so it stays paused when the page
@@ -1052,6 +1174,10 @@ T.ApplicationWindow {
         focus: visible
         privateMode: root.privateMode
         onBackPressed: root.backOnStart()
+        onTyped: text => {
+            root.openScreen("search");
+            searchScreen.startTyping(text);
+        }
         onOpenUrl: url => root.openInCurrent(url)
         onSearch: {
             root.openScreen("search");

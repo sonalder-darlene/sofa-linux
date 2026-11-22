@@ -28,6 +28,8 @@ BigscreenUI.Page {
     signal addTile()
     // Back on the start page (when no tile is being carried).
     signal backPressed()
+    // A keyboard typed `text` here: a search or address starts with it.
+    signal typed(string text)
 
     // Bookmarks cards on the start page: one line of twelve, as on Android.
     readonly property int bookmarkSlots: 12
@@ -49,6 +51,17 @@ BigscreenUI.Page {
             drop();
         } else {
             backPressed();
+        }
+    }
+
+    // A letter, digit or sign typed with a keyboard anywhere here starts a search with it (the cards don't take
+    // typed text). Space stays the cards' OK; shortcuts (Ctrl, Alt, Meta) are left alone.
+    Keys.onPressed: event => {
+        const text = event.text;
+        if (movingTile < 0 && text.length === 1 && text > " " && text !== "\x7f"
+                && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
+            event.accepted = true;
+            typed(text);
         }
     }
 

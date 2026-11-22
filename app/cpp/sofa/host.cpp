@@ -5,11 +5,13 @@
 #include <QtCore/QCoreApplication>
 #include <QtDBus/QDBusConnection>
 #include <QtDBus/QDBusMessage>
+#include <QtGui/QCursor>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QInputMethodQueryEvent>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QPointingDevice>
+#include <QtGui/QTouchEvent>
 #include <QtGui/QWheelEvent>
 #include <QtQuick/QQuickWindow>
 #include <QtWebEngineCore/QWebEngineScript>
@@ -37,6 +39,7 @@ bool isRemoteKey(int key)
     case Qt::Key_PageDown:
     case Qt::Key_ChannelUp:
     case Qt::Key_ChannelDown:
+    case Qt::Key_Forward:
         return true;
     default:
         return false;
@@ -67,10 +70,16 @@ bool Host::claimOrHandOver(const QString &appId, const QString &url)
     QDBusMessage call = QDBusMessage::createMethodCall(appId, objectPath(appId),
                                                        QStringLiteral("org.freedesktop.Application"),
                                                        url.isEmpty() ? QStringLiteral("Activate") : QStringLiteral("Open"));
+    // This launch's permission to come to the front (from the launcher, or the app that opened a link) goes with the
+    // address, so the Sofa already running can come to the front with it.
+    QVariantMap platformData;
+    if (const QString token = qEnvironmentVariable("XDG_ACTIVATION_TOKEN"); !token.isEmpty()) {
+        platformData.insert(QStringLiteral("activation-token"), token);
+    }
     if (url.isEmpty()) {
-        call << QVariantMap();
+        call << platformData;
     } else {
-        call << QStringList{url} << QVariantMap();
+        call << QStringList{url} << platformData;
     }
     const QDBusMessage reply = bus.call(call, QDBus::Block, 3000);
     if (reply.type() == QDBusMessage::ErrorMessage) {
@@ -104,6 +113,21 @@ void Host::setTyping(bool on)
     }
     m_typing = on;
     Q_EMIT typingChanged();
+}
+
+void Host::setHideCursor(bool on)
+{
+    if (on == m_hideCursor) {
+        return;
+    }
+    m_hideCursor = on;
+    // An override for the whole app rather than a cursor on an item: an item that sets one takes the page's hover.
+    if (on) {
+        QGuiApplication::setOverrideCursor(QCursor(Qt::BlankCursor));
+    } else {
+        QGuiApplication::restoreOverrideCursor();
+    }
+    Q_EMIT hideCursorChanged();
 }
 
 QObject *Host::newPrivateProfile()
@@ -150,7 +174,9 @@ void Host::mouse(QQuickItem *item, int kind, qreal x, qreal y)
     auto send = [&](QEvent::Type type, Qt::MouseButton button, Qt::MouseButtons buttons) {
         QMouseEvent event(type, scene, scene, global, button, buttons, Qt::NoModifier,
                           QPointingDevice::primaryPointingDevice());
+        m_sending = true;
         QCoreApplication::sendEvent(window, &event);
+        m_sending = false;
     };
     switch (kind) {
     case 0:
@@ -187,7 +213,9 @@ void Host::wheel(QQuickItem *item, qreal x, qreal y, qreal dx, qreal dy)
     QWheelEvent event(scene, window->mapToGlobal(scene), pixels, angle, Qt::NoButton, Qt::NoModifier,
                       Qt::NoScrollPhase, false, Qt::MouseEventNotSynthesized,
                       QPointingDevice::primaryPointingDevice());
+    m_sending = true;
     QCoreApplication::sendEvent(window, &event);
+    m_sending = false;
 }
 
 bool Host::editing() const
@@ -229,9 +257,46 @@ bool Host::isPress(QEvent *event) const
     }
 }
 
+void Host::noticeRealPointer(QEvent *event)
+{
+    const QEvent::Type type = event->type();
+    if (m_sending
+        || (type != QEvent::MouseMove && type != QEvent::MouseButtonPress && type != QEvent::Wheel
+            && type != QEvent::TouchBegin)) {
+        return;
+    }
+    const auto *pointerEvent = static_cast<QSinglePointEvent *>(event);
+    if (type == QEvent::TouchBegin) {
+        const auto *touch = static_cast<QTouchEvent *>(event);
+        if (touch->points().isEmpty()) {
+            return;
+        }
+        const QPointF at = touch->points().constFirst().scenePosition();
+        Q_EMIT realPointer(at.x(), at.y());
+        return;
+    }
+    const QPointF at = pointerEvent->scenePosition();
+    // A window that appears, or comes back, under a pointer left still gets a move where it already was: only a
+    // move of a few pixels is the user's. Presses and scrolls always are.
+    if (type == QEvent::MouseMove) {
+        const bool first = !m_realSeen;
+        const QPointF from = m_realAt;
+        m_realSeen = true;
+        m_realAt = at;
+        if (first || (at - from).manhattanLength() < 3) {
+            return;
+        }
+    }
+    Q_EMIT realPointer(at.x(), at.y());
+}
+
 bool Host::eventFilter(QObject *watched, QEvent *event)
 {
     const QEvent::Type type = event->type();
+    // Each event reaches the window first, so a real pointer's event is noticed once, there.
+    if (watched->isWindowType()) {
+        noticeRealPointer(event);
+    }
     // The compositor says when the window stops being seen (Wayland's "suspended" state, an unmapped X11 window).
     if (type == QEvent::Expose && watched->isWindowType()) {
         auto *window = static_cast<QWindow *>(watched);
@@ -264,7 +329,9 @@ bool Host::eventFilter(QObject *watched, QEvent *event)
         return QObject::eventFilter(watched, event);
     }
     auto *key = static_cast<QKeyEvent *>(event);
-    if (!isRemoteKey(key->key())) {
+    // With Ctrl, Alt or Meta held a key is a keyboard shortcut (Alt+Left: back a page), not the remote's.
+    if (!isRemoteKey(key->key())
+        || (key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
         return QObject::eventFilter(watched, event);
     }
     if (m_typing && (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter)) {

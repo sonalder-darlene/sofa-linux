@@ -27,6 +27,14 @@ BigscreenUI.Page {
         update();
     }
 
+    // Shows the screen with what a keyboard began typing elsewhere, the cursor after it, so typing goes on.
+    function startTyping(text) {
+        field.text = text;
+        field.cursorPosition = text.length;
+        field.forceActiveFocus();
+        update();
+    }
+
     function update() {
         suggestions = field.text.trim() === "" ? [] : JSON.parse(Library.suggest(field.text));
     }

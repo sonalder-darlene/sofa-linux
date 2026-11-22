@@ -8,6 +8,10 @@
 // shows it. Page Up and Page Down (Channel up and down) scroll by a screen.
 //
 // Every click, move and scroll reaches the page as real mouse and wheel input, so pages treat it as the user's own.
+//
+// A real pointer (a mouse, a touchpad, a pad's stick that the system turns into a pointer) takes over as soon as it
+// is used: this one hides and sends nothing, and the next arrow press brings it back where the real one was. While
+// this one is in use, the window hides the system's pointer (Main.qml), so only one shows.
 
 import QtQuick
 
@@ -22,6 +26,8 @@ Item {
     property real px: width / 2
     property real py: height / 2
     property bool shown: false
+    // Whether the remote is the pointer in use (since an arrow or OK), rather than a real pointer.
+    property bool driving: false
 
     // Asks the window for a link menu at the pointer: it replies with answered().
     signal hold(real x, real y)
@@ -71,6 +77,23 @@ Item {
         scrollMode = on;
     }
 
+    // A real pointer was used at (x, y) in the window: step aside, and come back there on the next arrow.
+    function realUsed(x, y) {
+        if (driving || shown || okHeld || scrollMode) {
+            reset();
+        }
+        driving = false;
+        const p = mapFromItem(null, x, y);
+        px = Math.max(0, Math.min(width - 1, p.x));
+        py = Math.max(0, Math.min(height - 1, p.y));
+    }
+
+    // A press landed on the page (this pointer's, a real mouse's or a touch): whether it went into a text field is
+    // known a moment later.
+    function checkTyping() {
+        typingCheck.restart();
+    }
+
     // The window's answer to hold(): whether there was a link or a picture under the pointer.
     function answered(found) {
         if (!waitingForAnswer) {
@@ -118,6 +141,7 @@ Item {
             host.typing = false;
         }
         if (pressed) {
+            driving = true;
             if (dx !== 0) dirX = dx;
             if (dy !== 0) dirY = dy;
             poke();
@@ -140,6 +164,7 @@ Item {
     }
 
     function okDown() {
+        driving = true;
         if (scrollMode) {
             setScrollMode(false);
             okRevealOnly = true;
