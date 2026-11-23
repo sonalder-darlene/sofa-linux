@@ -62,7 +62,17 @@ T.ApplicationWindow {
     readonly property int liveKeep: Session.liveBackground()
     property double lastBackOnStart: 0
 
+    // Anything Sofa asks over the page or the start page: while one is up the arrows and OK belong to it.
     readonly property bool dialogOpen: linkMenu.visible || tabMenu.visible || tileDialog.visible || tileMenu.visible
+                                       || engineNotice.visible || pageChoice.visible || pageText.visible
+    // The question a page asked that is on screen: what answers the engine's request (called with whether the user
+    // agreed, and the text typed), and the page it came from. Always answered: when the dialog closes, or when the
+    // page goes.
+    property var pageAnswer: null
+    property var pageAnswerView: null
+    // The last Back tried to leave a text field and the field kept the focus (a frame that is an editor, a page that
+    // takes the focus back): the next Back opens the menu instead of trying again.
+    property bool fieldStuck: false
 
     title: (revision, currentTab && currentTab.title !== "" && screen === "page" ? currentTab.title + " — Sofa" : "Sofa")
     width: Kirigami.Units.gridUnit * 64
@@ -185,6 +195,10 @@ T.ApplicationWindow {
         if (!tabs[id]) {
             return;
         }
+        if (id !== currentId) {
+            leaveFullScreen(currentView);
+            fieldStuck = false;
+        }
         order.select(id);
         currentId = id;
         revision++;
@@ -272,6 +286,8 @@ T.ApplicationWindow {
                 continue;
             }
             if (tab.view) {
+                leaveFullScreen(tab.view);
+                dropPageRequest(tab.view);
                 tab.view.destroy();
             }
             delete tabs[id];
@@ -367,6 +383,8 @@ T.ApplicationWindow {
         for (const id of JSON.parse(privateOrder.order())) {
             const tab = tabs[id];
             if (tab && tab.view) {
+                leaveFullScreen(tab.view);
+                dropPageRequest(tab.view);
                 tab.view.destroy();
             }
             delete tabs[id];
@@ -465,15 +483,52 @@ T.ApplicationWindow {
     // Back on a page: leave a text field (the on-screen keyboard goes with it), then full screen, then scroll mode,
     // else Sofa's menu. Bigscreen's own browser goes the same way.
     function pageBack() {
-        if (currentView && (host.typing || host.editing())) {
+        const editing = currentView && (host.typing || host.editing());
+        if (!editing) {
+            fieldStuck = false;
+        }
+        if (editing && fieldStuck) {
+            // Leaving the field didn't work last time: Back is not trapped in it.
+            fieldStuck = false;
+            host.typing = false;
+            openMenu();
+        } else if (editing) {
             host.typing = false;
             currentView.leaveField();
+            fieldCheck.restart();
         } else if (currentView && currentView.isFullScreen) {
             currentView.fullScreenCancelled();
         } else if (pointer.scrollMode) {
             pointer.setScrollMode(false);
         } else {
             openMenu();
+        }
+    }
+
+    // A moment after Back tried to leave a field: still in it means it can't be left that way.
+    Timer {
+        id: fieldCheck
+        interval: 400
+        onTriggered: root.fieldStuck = root.currentView !== null && root.host.editing()
+    }
+
+    // Ends a page's full screen and gives the window back its mode, now: the page may be about to go (its tab
+    // closed, another one or another screen in front), and then nothing would tell the window.
+    function leaveFullScreen(view) {
+        if (!view || !view.isFullScreen) {
+            return;
+        }
+        view.fullScreenCancelled();
+        if (windowedBeforePage) {
+            windowedBeforePage = false;
+            showNormal();
+        }
+    }
+
+    onScreenChanged: {
+        fieldStuck = false;
+        if (screen !== "page") {
+            leaveFullScreen(currentView);
         }
     }
 
@@ -740,17 +795,17 @@ T.ApplicationWindow {
     // With the pointer off (or a mouse in use), the page has the keys; these still reach Sofa.
     Shortcut {
         sequences: ["Back", "Esc"]
-        enabled: root.screen === "page" && !root.menuShown && !root.host.remoteKeys
+        enabled: root.screen === "page" && !root.menuShown && !root.dialogOpen && !root.host.remoteKeys
         onActivated: root.pageBack()
     }
     Shortcut {
         sequence: "Menu"
-        enabled: root.screen === "page" && !root.menuShown && !root.host.remoteKeys
+        enabled: root.screen === "page" && !root.menuShown && !root.dialogOpen && !root.host.remoteKeys
         onActivated: root.openMenu()
     }
     Shortcut {
         sequence: "Forward"
-        enabled: root.screen === "page" && !root.host.remoteKeys
+        enabled: root.screen === "page" && !root.dialogOpen && !root.host.remoteKeys
         onActivated: root.pageForward()
     }
     Shortcut {
@@ -873,6 +928,8 @@ T.ApplicationWindow {
             property int tabId: -1
             // The page process ended while out of sight: reload when shown.
             property bool stopped: false
+            // When the page process ended lately while the page was in sight (milliseconds since 1970).
+            property var crashTimes: []
             // History counts the visits the user made: the next load is Sofa's own (a tab brought back at start, an
             // unloaded tab shown again, a reload after a crash) and doesn't count.
             property bool quietLoad: false
@@ -896,9 +953,10 @@ T.ApplicationWindow {
             }
 
             // Takes the focus out of the page's text field (in whichever frame it is), so the on-screen keyboard
-            // hides and the remote's keys mean the pointer again.
+            // hides and the remote's keys mean the pointer again. A frame that holds the focus is let go from the
+            // page around it; an editable page or frame (a rich text editor) is let go of itself.
             function leaveField() {
-                const script = "{ const e = document.activeElement; if (e && e !== document.body && (e.isContentEditable"
+                const script = "{ const e = document.activeElement; if (e && (e.tagName === 'IFRAME' || e.isContentEditable"
                              + " || /^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName))) e.blur(); }";
                 const frames = [mainFrame];
                 while (frames.length > 0) {
@@ -934,6 +992,10 @@ T.ApplicationWindow {
             // paused and the page frozen, so it can't play, run or open anything. In sight: running again, its media
             // still paused. The steps wait a little so a window hidden for a blink doesn't stop a video.
             onVisibleChanged: {
+                // A question this page asked goes unanswered no longer than the page is in sight.
+                if (!visible) {
+                    root.dropPageRequest(view);
+                }
                 if (visible) {
                     quietSteps.stop();
                     audioMuted = false;
@@ -1064,6 +1126,24 @@ T.ApplicationWindow {
             // Private by default: pages get no camera, microphone, location, screen or notifications.
             onPermissionRequested: permission => permission.deny()
 
+            // What a page asks with a dialog (alert, confirm, prompt, sign in) is asked in Sofa's own dialogs, which
+            // the remote can answer; the engine's own would stay unseen and unreachable. Choosing a file or a colour
+            // is not offered yet.
+            property var dialogTimes: []
+            onJavaScriptDialogRequested: request => root.askPage(view, request)
+            onAuthenticationDialogRequested: request => root.askLogin(view, request)
+            onFileDialogRequested: request => {
+                request.accepted = true;
+                request.dialogReject();
+                if (visible) {
+                    root.notify(qsTr("Choosing a file is not possible in Sofa yet"));
+                }
+            }
+            onColorDialogRequested: request => {
+                request.accepted = true;
+                request.dialogReject();
+            }
+
             // A window the page opens on a press (a link with target=_blank, window.open on a click) opens in this
             // tab if the pop-up rules allow it; windows a page opens on its own are dropped. Only the user opens tabs.
             // A window opened blank gets its address later: a hidden view catches the first one.
@@ -1115,8 +1195,17 @@ T.ApplicationWindow {
                     return;
                 }
                 if (visible) {
-                    root.notify(qsTr("This page stopped. Reloading it."));
-                    reloadQuietly();
+                    // A page that stops again and again is left alone after two tries in half a minute.
+                    const now = Date.now();
+                    crashTimes = crashTimes.filter(t => now - t < 30000).concat([now]);
+                    if (crashTimes.length > 2) {
+                        root.notify(qsTr("This page keeps stopping. Open it again from the menu to try once more."));
+                        stopped = true;
+                        crashTimes = [];
+                    } else {
+                        root.notify(qsTr("This page stopped. Reloading it."));
+                        reloadQuietly();
+                    }
                 } else {
                     stopped = true;
                 }
@@ -1153,6 +1242,23 @@ T.ApplicationWindow {
             }
             onPermissionRequested: permission => permission.deny()
             onNewWindowRequested: request => {}
+            // It never shows anything, so nothing is asked either.
+            onJavaScriptDialogRequested: request => {
+                request.accepted = true;
+                request.dialogReject();
+            }
+            onAuthenticationDialogRequested: request => {
+                request.accepted = true;
+                request.dialogReject();
+            }
+            onFileDialogRequested: request => {
+                request.accepted = true;
+                request.dialogReject();
+            }
+            onColorDialogRequested: request => {
+                request.accepted = true;
+                request.dialogReject();
+            }
 
             Timer {
                 interval: 10000
@@ -1172,6 +1278,133 @@ T.ApplicationWindow {
             }
         };
         request.openIn(catcher);
+    }
+
+    // --- What a page asks ------------------------------------------------------------------------------------------
+
+    function shorten(text) {
+        return text.length > 600 ? text.slice(0, 600) + "…" : text;
+    }
+
+    // Answers an alert, confirm or prompt the way "no" would, without asking anyone.
+    function answerQuietly(request) {
+        if (request.type === JavaScriptDialogRequest.DialogTypeAlert) {
+            request.dialogAccept("");
+        } else {
+            request.dialogReject();
+        }
+    }
+
+    // A page's alert, confirm or prompt, in Sofa's dialog. A page about to be left is let go (the user already chose
+    // to leave). A page out of sight, or one that asks more than three times in ten seconds, gets answered without
+    // asking: no page can keep the remote busy.
+    function askPage(view, request) {
+        request.accepted = true;
+        const kind = request.type;
+        if (kind === JavaScriptDialogRequest.DialogTypeBeforeUnload) {
+            request.dialogAccept("");
+            return;
+        }
+        const now = Date.now();
+        view.dialogTimes = view.dialogTimes.filter(t => now - t < 10000).concat([now]);
+        if (!view.visible || pageAnswer || view.dialogTimes.length > 3) {
+            if (view.visible && view.dialogTimes.length === 4) {
+                notify(qsTr("This page keeps asking questions: Sofa answers them for it"));
+            }
+            answerQuietly(request);
+            return;
+        }
+        const origin = Session.label(request.securityOrigin.toString());
+        const title = origin !== "" ? qsTr("%1 says").arg(origin) : qsTr("This page says");
+        pageAnswerView = view;
+        pageAnswer = (ok, text) => {
+            if (kind === JavaScriptDialogRequest.DialogTypeAlert || ok) {
+                request.dialogAccept(text);
+            } else {
+                request.dialogReject();
+            }
+        };
+        const message = shorten(request.message);
+        if (kind === JavaScriptDialogRequest.DialogTypePrompt) {
+            pageText.ask({ title: title, message: message, text: request.defaultText, saveText: qsTr("OK") }, text => {
+                answerPage(true, text);
+                return "";
+            });
+        } else if (kind === JavaScriptDialogRequest.DialogTypeConfirm) {
+            pageChoice.ask(title, message, [{ text: qsTr("OK"), value: true }, { text: qsTr("Cancel"), value: false }],
+                           ok => answerPage(ok, ""), 0);
+        } else {
+            pageChoice.ask(title, message, [{ text: qsTr("OK"), value: true }], ok => answerPage(true, ""), 0);
+        }
+    }
+
+    // A page's sign-in (a web address that asks for a user name and password, or a proxy): the name, then the
+    // password, each in a dialog. Back at either step cancels the sign-in.
+    function askLogin(view, request) {
+        request.accepted = true;
+        if (!view.visible || pageAnswer) {
+            request.dialogReject();
+            return;
+        }
+        const proxy = request.type === AuthenticationDialogRequest.AuthenticationTypeProxy;
+        const who = proxy ? request.proxyHost : Session.label(request.url.toString());
+        const title = qsTr("Sign in to %1").arg(who);
+        const message = shorten(request.realm);
+        pageAnswerView = view;
+        pageAnswer = ok => {
+            if (!ok) {
+                request.dialogReject();
+            }
+        };
+        pageText.ask({ title: title, message: message, placeholder: qsTr("User name"), saveText: qsTr("Next") }, user => {
+            Qt.callLater(() => pageText.ask({ title: title, message: message, placeholder: qsTr("Password"),
+                                              secret: true, saveText: qsTr("Sign in") }, password => {
+                pageAnswer = null;
+                pageAnswerView = null;
+                request.dialogAccept(user, password);
+                return "";
+            }));
+            return "";
+        });
+    }
+
+    // The dialog was answered (or cancelled with Back): the page's question gets its answer once.
+    function answerPage(ok, text) {
+        const answer = pageAnswer;
+        if (!answer) {
+            return;
+        }
+        pageAnswer = null;
+        pageAnswerView = null;
+        answer(ok, text);
+    }
+
+    // `view` goes or leaves the screen: a question it asked and nobody answered is answered with "no", and its
+    // dialog closes.
+    function dropPageRequest(view) {
+        if (!pageAnswer || pageAnswerView !== view) {
+            return;
+        }
+        const answer = pageAnswer;
+        pageAnswer = null;
+        pageAnswerView = null;
+        pageChoice.close();
+        pageText.close();
+        answer(false, "");
+    }
+
+    // After a page's dialog: the keys go back to what was under it.
+    function pageDialogClosed() {
+        Qt.callLater(() => {
+            if (pageChoice.visible || pageText.visible) {
+                return;
+            }
+            if (menuShown) {
+                menu.show();
+            } else if (screen === "page" && currentView) {
+                currentView.forceActiveFocus();
+            }
+        });
     }
 
     function askLink(link, text) {
@@ -1326,6 +1559,17 @@ T.ApplicationWindow {
                 startPage.focusFirst();
             }
         })
+    }
+    // The dialogs a page asks for (askPage, askLogin).
+    ChoiceDialog {
+        id: pageChoice
+        onCancelled: root.answerPage(false, "")
+        onClosed: root.pageDialogClosed()
+    }
+    TextDialog {
+        id: pageText
+        onCancelled: root.answerPage(false, "")
+        onClosed: root.pageDialogClosed()
     }
     ChoiceDialog {
         id: linkMenu

@@ -6,7 +6,10 @@
 
 #pragma once
 
+#include <QtCore/QElapsedTimer>
+#include <QtCore/QList>
 #include <QtCore/QObject>
+#include <QtCore/QPointer>
 #include <QtCore/QPointF>
 #include <QtCore/QStringList>
 #include <QtCore/QVariantMap>
@@ -90,7 +93,10 @@ protected:
 
 private:
     bool isPress(QEvent *event) const;
+    // The remote's keys go to the pointer: asked for, and no pop-up of the engine is up.
+    bool remoteActive() const { return m_remoteKeys && m_popups.isEmpty(); }
     void noticeRealPointer(QEvent *event);
+    void trackPopup(QWindow *window, bool shown);
 
     QWebEngineUrlRequestInterceptor *m_interceptor;
     QString m_pageScript;
@@ -99,8 +105,15 @@ private:
     bool m_windowShown = true;
     bool m_hideCursor = false;
     Qt::MouseButtons m_buttons = Qt::NoButton;
+    // Sofa's own events carry the time they were made, in milliseconds since Sofa started: the engine counts a
+    // second press as a double click when it comes within the system's interval of the one before, and an event
+    // without a time looks like it came at once.
+    QElapsedTimer m_clock;
     // While Sofa sends its own mouse or wheel event.
     bool m_sending = false;
+    // The engine's pop-up windows on show (a list of choices opened by a press): while one is up the keys belong to
+    // it, not to Sofa's pointer.
+    QList<QPointer<QWindow>> m_popups;
     // Where the real pointer was last seen; none until the first event.
     QPointF m_realAt;
     bool m_realSeen = false;

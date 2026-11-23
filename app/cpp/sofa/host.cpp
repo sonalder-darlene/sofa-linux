@@ -118,6 +118,7 @@ Host::Host(QWebEngineUrlRequestInterceptor *interceptor, const QString &pageScri
     , m_interceptor(interceptor)
     , m_pageScript(pageScript)
 {
+    m_clock.start();
     qApp->installEventFilter(this);
 }
 
@@ -210,6 +211,7 @@ void Host::mouse(QQuickItem *item, int kind, qreal x, qreal y)
     auto send = [&](QEvent::Type type, Qt::MouseButton button, Qt::MouseButtons buttons) {
         QMouseEvent event(type, scene, scene, global, button, buttons, Qt::NoModifier,
                           QPointingDevice::primaryPointingDevice());
+        event.setTimestamp(static_cast<quint64>(m_clock.elapsed()));
         m_sending = true;
         QCoreApplication::sendEvent(window, &event);
         m_sending = false;
@@ -249,6 +251,7 @@ void Host::wheel(QQuickItem *item, qreal x, qreal y, qreal dx, qreal dy)
     QWheelEvent event(scene, window->mapToGlobal(scene), pixels, angle, Qt::NoButton, Qt::NoModifier,
                       Qt::NoScrollPhase, false, Qt::MouseEventNotSynthesized,
                       QPointingDevice::primaryPointingDevice());
+    event.setTimestamp(static_cast<quint64>(m_clock.elapsed()));
     m_sending = true;
     QCoreApplication::sendEvent(window, &event);
     m_sending = false;
@@ -283,7 +286,7 @@ bool Host::isPress(QEvent *event) const
         case Qt::Key_Enter:
         case Qt::Key_Select:
             // Taken for the pointer (which then clicks, a press of its own) unless the page has them.
-            return !m_remoteKeys || (m_typing && key->key() != Qt::Key_Select);
+            return !remoteActive() || (m_typing && key->key() != Qt::Key_Select);
         default:
             return false;
         }
@@ -326,6 +329,20 @@ void Host::noticeRealPointer(QEvent *event)
     Q_EMIT realPointer(at.x(), at.y());
 }
 
+void Host::trackPopup(QWindow *window, bool shown)
+{
+    // A window that hangs on another one and isn't a normal window: the engine's own pop-up (a <select>'s list).
+    // Sofa's own screens are items in its one window.
+    if (!window->transientParent() || (window->flags() & Qt::WindowType_Mask) == Qt::Window) {
+        return;
+    }
+    m_popups.removeAll(window);
+    m_popups.removeAll(nullptr);
+    if (shown) {
+        m_popups.append(window);
+    }
+}
+
 bool Host::eventFilter(QObject *watched, QEvent *event)
 {
     const QEvent::Type type = event->type();
@@ -333,17 +350,24 @@ bool Host::eventFilter(QObject *watched, QEvent *event)
     if (watched->isWindowType()) {
         noticeRealPointer(event);
     }
-    // The compositor says when the window stops being seen (Wayland's "suspended" state, an unmapped X11 window).
+    if (watched->isWindowType() && (type == QEvent::Show || type == QEvent::Hide)) {
+        trackPopup(static_cast<QWindow *>(watched), type == QEvent::Show);
+    }
+    // The compositor says when the window stops being seen (Wayland's "suspended" state, an unmapped X11 window). Only
+    // Sofa's own window counts: a pop-up the engine opens (a list of choices) has its own window and comes and goes
+    // while the page is in use.
     if (type == QEvent::Expose && watched->isWindowType()) {
         auto *window = static_cast<QWindow *>(watched);
-        if (!window->transientParent() && window->isExposed() != m_windowShown) {
+        const bool mainWindow = (window->flags() & Qt::WindowType_Mask) == Qt::Window && !window->transientParent();
+        if (mainWindow && window->isExposed() != m_windowShown) {
             m_windowShown = window->isExposed();
             Q_EMIT windowShownChanged();
         }
     }
     // Sofa's screens are made of KDE's TV controls, which take OK as Return: a remote's Select is sent on as Return
     // (and then counted as a press, once).
-    if (!m_remoteKeys && watched->isWindowType() && (type == QEvent::KeyPress || type == QEvent::KeyRelease)) {
+    const bool remote = remoteActive();
+    if (!remote && watched->isWindowType() && (type == QEvent::KeyPress || type == QEvent::KeyRelease)) {
         auto *key = static_cast<QKeyEvent *>(event);
         if (key->key() == Qt::Key_Select) {
             QKeyEvent ok(type, Qt::Key_Return, key->modifiers(), QStringLiteral("\r"), key->isAutoRepeat(),
@@ -356,7 +380,7 @@ bool Host::eventFilter(QObject *watched, QEvent *event)
     if (watched->isWindowType() && isPress(event)) {
         Q_EMIT pressed();
     }
-    if (!m_remoteKeys || (type != QEvent::KeyPress && type != QEvent::KeyRelease && type != QEvent::ShortcutOverride)) {
+    if (!remote || (type != QEvent::KeyPress && type != QEvent::KeyRelease && type != QEvent::ShortcutOverride)) {
         return QObject::eventFilter(watched, event);
     }
     // A key press passes through here once per object it is sent to (the window, then the item in focus); only the

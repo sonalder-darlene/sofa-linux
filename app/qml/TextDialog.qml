@@ -18,7 +18,13 @@ BigscreenUI.Dialog {
     property string extraText: ""
     property string extraValue: ""
     property bool address: false
+    // A password: shown as dots, no suggestions.
+    property bool secret: false
     property var answerHandler: null
+    property bool answered: false
+
+    // The dialog closed without an answer (Back, or Cancel).
+    signal cancelled()
 
     // Asks `options.title`; `answer(text)` runs on Save and returns "" to close or an error message to keep the
     // dialog open.
@@ -28,6 +34,7 @@ BigscreenUI.Dialog {
         field.placeholderText = options.placeholder || "";
         field.text = options.text || "";
         address = options.address === true;
+        secret = options.secret === true;
         extraText = options.extraText || "";
         extraValue = options.extraValue || "";
         saveButton.text = options.saveText || qsTr("Save");
@@ -43,15 +50,22 @@ BigscreenUI.Dialog {
             field.forceActiveFocus();
             return;
         }
+        answered = true;
         close();
     }
 
     openFocusItem: field
+    onAboutToShow: answered = false
     onOpened: {
         field.cursorPosition = field.text.length;
         Qt.inputMethod.show();
     }
-    onClosed: Qt.inputMethod.hide()
+    onClosed: {
+        Qt.inputMethod.hide();
+        if (!answered) {
+            cancelled();
+        }
+    }
 
     contentItem: ColumnLayout {
         spacing: Kirigami.Units.largeSpacing
@@ -67,8 +81,10 @@ BigscreenUI.Dialog {
         BigscreenUI.TextField {
             id: field
             Layout.fillWidth: true
-            inputMethodHints: textDialog.address ? (Qt.ImhUrlCharactersOnly | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase)
-                                             : Qt.ImhNone
+            echoMode: textDialog.secret ? TextInput.Password : TextInput.Normal
+            inputMethodHints: textDialog.secret ? (Qt.ImhHiddenText | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase)
+                              : textDialog.address ? (Qt.ImhUrlCharactersOnly | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase)
+                                                   : Qt.ImhNone
             Accessible.name: textDialog.title
             onAccepted: textDialog.answer(text)
             KeyNavigation.down: textDialog.footer
