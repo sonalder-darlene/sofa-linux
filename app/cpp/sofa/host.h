@@ -45,12 +45,14 @@ public:
     bool hideCursor() const { return m_hideCursor; }
     void setHideCursor(bool on);
 
-    // A new profile for one private browsing session: kept in memory only, with the same request rules as the
-    // default one. endPrivateProfile() lets go of it once no page uses it.
+    // A new profile for one private browsing session: kept in memory only, set up like the default one. Null when
+    // the engine would keep it on disk after all: then there is no private browsing. endPrivateProfile() lets go of
+    // it once no page uses it.
     Q_INVOKABLE QObject *newPrivateProfile();
     Q_INVOKABLE void endPrivateProfile(QObject *profile);
-    // Adds the page script to `profile` (the default one; private ones get it when made).
-    void addPageScript(QQuickWebEngineProfile *profile) const;
+    // What every profile gets (the default one here, private ones when made): the request rules, the page script,
+    // no third-party cookies, and the user agent of Chrome on Linux with the engine's own version.
+    void setUpProfile(QQuickWebEngineProfile *profile) const;
 
     // A real mouse event at (x, y) in `item`: 0 move, 1 left press, 2 left release, 3 right click.
     Q_INVOKABLE void mouse(QQuickItem *item, int kind, qreal x, qreal y);

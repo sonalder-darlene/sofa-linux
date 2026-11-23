@@ -28,6 +28,27 @@ pub fn state_dir() -> Option<PathBuf> {
     base("XDG_STATE_HOME", ".local/state")
 }
 
+/// `~/.cache/<app ID>`: QtWebEngine's cache (Qt puts it there itself).
+pub fn cache_dir() -> Option<PathBuf> {
+    base("XDG_CACHE_HOME", ".cache")
+}
+
+/// Makes Sofa's own folders (data, config, state, cache) readable by the user alone: made that way when missing,
+/// and set so at each start when they exist. Before the web engine starts, so its profile lands inside them.
+pub fn make_own_folders_private() {
+    use std::os::unix::fs::PermissionsExt;
+    for dir in [data_dir(), config_dir(), state_dir(), cache_dir()].into_iter().flatten() {
+        let done = if dir.is_dir() {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+        } else {
+            sofa_core::settings::create_private_dir(&dir)
+        };
+        if let Err(error) = done {
+            eprintln!("sofa-tv-browser: {} could not be made private: {error}", dir.display());
+        }
+    }
+}
+
 /// The user's Downloads folder (`XDG_DOWNLOAD_DIR` in `user-dirs.dirs`, else `~/Downloads`).
 pub fn downloads_dir() -> Option<PathBuf> {
     let home = PathBuf::from(std::env::var_os("HOME")?);

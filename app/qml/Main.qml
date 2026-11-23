@@ -45,6 +45,8 @@ T.ApplicationWindow {
     // Tabs: one side for normal browsing, one for private browsing (as on Android, never side by side).
     property bool privateMode: false
     property QtObject privateProfile: null
+    // The views waiting for a blank window's address (catchWindow), so private browsing can end theirs.
+    property var catchers: []
     // id → {id, url, title, view (a WebEngineView or null while unloaded), private}
     property var tabs: ({})
     property int nextTabId: 1
@@ -338,7 +340,12 @@ T.ApplicationWindow {
     }
 
     function enterPrivate() {
-        privateProfile = host.newPrivateProfile();
+        const profile = host.newPrivateProfile();
+        if (!profile) {
+            notify(qsTr("Private browsing can't start: the web engine would keep its data"));
+            return;
+        }
+        privateProfile = profile;
         // The normal tabs are unloaded while private browsing is on; they come back with their history after.
         for (const id of JSON.parse(normalOrder.order())) {
             const view = tabs[id].view;
@@ -365,7 +372,16 @@ T.ApplicationWindow {
             delete tabs[id];
             privateOrder.remove(id);
         }
-        // The profile goes once its pages are gone: with it go the session's cookies, storage and cache.
+        // Windows a private page opened blank go with it.
+        for (const catcher of catchers.filter(c => c.profile === privateProfile)) {
+            catcher.destroy();
+        }
+        // The profile goes once its pages are gone: with it go the session's cookies, storage and cache. One still
+        // waiting from a session just before goes at once: its pages went then.
+        if (endProfile.profile) {
+            endProfile.stop();
+            endProfile.triggered();
+        }
         endProfile.profile = privateProfile;
         endProfile.restart();
         privateProfile = null;
@@ -909,6 +925,10 @@ T.ApplicationWindow {
             visible: root.screen === "page" && root.currentId === tabId && root.host.windowShown
             activeFocusOnPress: true
             settings.focusOnNavigationEnabled: false
+            // A page sees only the network address the internet sees (no local one through WebRTC), and a local
+            // file can't read other files.
+            settings.webRTCPublicInterfacesOnly: true
+            settings.localContentCanAccessFileUrls: false
 
             // Out of sight (another tab or screen in front, or Sofa's window hidden): muted at once, then its media
             // paused and the page frozen, so it can't play, run or open anything. In sight: running again, its media
@@ -1119,6 +1139,9 @@ T.ApplicationWindow {
             width: 1
             height: 1
             audioMuted: true
+            settings.webRTCPublicInterfacesOnly: true
+            settings.localContentCanAccessFileUrls: false
+            Component.onDestruction: root.catchers = root.catchers.filter(c => c !== catcher)
             onNavigationRequested: request => {
                 request.reject();
                 if (request.isMainFrame && done) {
@@ -1141,6 +1164,7 @@ T.ApplicationWindow {
 
     function catchWindow(view, request, opener, link) {
         const catcher = catcherComponent.createObject(pageLayer, { profile: view.profile });
+        catchers = catchers.concat([catcher]);
         // A tab closed meanwhile is null here.
         catcher.done = target => {
             if (view) {

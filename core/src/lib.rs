@@ -11,6 +11,7 @@ pub mod ads;
 pub mod bookmark_file;
 pub mod engine_age;
 pub mod folders;
+pub mod history_days;
 pub mod library;
 pub mod popups;
 pub mod requests;

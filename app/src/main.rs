@@ -80,6 +80,7 @@ fn run(options: &Options) -> ExitCode {
             CHECK_QML
         }
         _ => {
+            paths::make_own_folders_private();
             let start_url = options.start.as_deref().map(start_address).unwrap_or_default();
             let first = shell::ffi::prepare_engine(
                 engine_ref.as_mut(),
@@ -143,17 +144,19 @@ pub fn press_tag() -> &'static PressTag {
 }
 
 /// Switches the ad blocker as Settings say, reads the sites where it is switched off, and compiles its lists on a
-/// worker thread, so the window doesn't wait: nothing is blocked during that tenth of a second.
+/// worker thread, so the window doesn't wait. The first pages' requests wait for the lists instead (that tenth of a
+/// second), so they load without their ads.
 fn start_ad_blocker() {
     let config = paths::config_dir();
     let settings = KeyFile::load(config.as_ref().map(|d| d.join("settings.conf")), SETTINGS);
     let ads = ad_blocker();
     ads.set_enabled(settings.get("adblock") == "true");
     ads.set_allowlist(AdAllowlist::load(config.map(|d| d.join(AD_ALLOWLIST_FILE))));
-    let ads = Arc::clone(ads);
-    let spawned = std::thread::Builder::new().name("sofa-filters".to_owned()).spawn(move || ads.load_bundled());
-    if let Err(error) = spawned {
-        eprintln!("sofa-tv-browser: the filter lists could not be loaded ({error}); ads are not blocked");
+    let compiling = Arc::clone(ads);
+    let spawned = std::thread::Builder::new().name("sofa-filters".to_owned()).spawn(move || compiling.load_bundled());
+    match spawned {
+        Ok(_) => ads.loading(),
+        Err(error) => eprintln!("sofa-tv-browser: the filter lists could not be loaded ({error}); ads are not blocked"),
     }
 }
 

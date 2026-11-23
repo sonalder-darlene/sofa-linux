@@ -16,7 +16,7 @@ pub mod qobject {
         #[qml_singleton]
         type Session = super::SessionRust;
 
-        /// A setting (`search_engine`, `open_at_start`, `start_page`, `adblock`); "" for an unknown key.
+        /// A setting (`search_engine`, `open_at_start`, `start_page`, `adblock`, `history_days`); "" for an unknown key.
         #[qinvokable]
         fn value(&self, key: &QString) -> QString;
         /// Sets a setting after checking it; false when the value doesn't fit.

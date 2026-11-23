@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Settings, laid out as KDE's TV settings pages: the search engine, what Sofa opens at start, ad blocking, and what
-// this copy is. More settings come with the features they belong to.
+// Settings, laid out as KDE's TV settings pages: the search engine, what Sofa opens at start, ad blocking, how long
+// history is kept, and what this copy is. More settings come with the features they belong to.
 
 import QtQuick
 import QtQuick.Layouts
@@ -28,10 +28,11 @@ BigscreenUI.ScrollablePage {
     BigscreenUI.BackHandler.enabled: visible
     BigscreenUI.BackHandler.onActivated: screen.back()
 
-    // Shows the screen with the row `focusKey` ("engine", "open", "adblock", "about"; "" for the first) in focus.
+    // Shows the screen with the row `focusKey` ("engine", "open", "adblock", "history", "about"; "" for the first) in
+    // focus.
     function start(focusKey) {
         revision++;
-        const rows = { engine: engineRow, open: openRow, adblock: adBlockRow, about: aboutRow };
+        const rows = { engine: engineRow, open: openRow, adblock: adBlockRow, history: historyRow, about: aboutRow };
         (rows[focusKey] || engineRow).forceActiveFocus();
         scrollToTop();
     }
@@ -49,6 +50,26 @@ BigscreenUI.ScrollablePage {
              : open === "last" ? qsTr("Where I left off") : qsTr("Start page");
     }
     readonly property bool adBlock: (revision, Session.value("adblock") === "true")
+
+    // Settings → Keep history for: the stored value (days, -1 always, 0 never) and its name.
+    readonly property var historyChoices: [
+        { text: qsTr("7 days"), value: "7" },
+        { text: qsTr("30 days"), value: "30" },
+        { text: qsTr("90 days"), value: "90" },
+        { text: qsTr("Always"), value: "-1" },
+        { text: qsTr("Never"), detail: qsTr("Nothing is saved"), value: "0" }
+    ]
+    readonly property string historyDays: (revision, Session.value("history_days"))
+
+    function askHistory() {
+        choice.ask(qsTr("Keep history for"),
+                   qsTr("Pages you visit stay in History, on this computer, for this long. Older ones are removed. Never: nothing is saved."),
+                   historyChoices, value => {
+            Session.setValue("history_days", value);
+            Library.keepHistoryFor(Number(value));
+            revision++;
+        }, Math.max(0, historyChoices.findIndex(c => c.value === historyDays)));
+    }
 
     function about() {
         const engine = JSON.parse(Session.engineInfo());
@@ -131,6 +152,17 @@ BigscreenUI.ScrollablePage {
             onToggled: {
                 Session.setValue("adblock", checked ? "true" : "false");
                 screen.revision++;
+            }
+        }
+        BigscreenUI.ButtonDelegate {
+            id: historyRow
+            Layout.fillWidth: true
+            icon.name: "view-history"
+            text: qsTr("Keep history for")
+            description: (screen.historyChoices.find(c => c.value === screen.historyDays) || screen.historyChoices[2]).text
+            onClicked: {
+                screen.lastRow = historyRow;
+                screen.askHistory();
             }
         }
         BigscreenUI.ButtonDelegate {

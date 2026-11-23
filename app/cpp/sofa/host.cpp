@@ -14,7 +14,10 @@
 #include <QtGui/QTouchEvent>
 #include <QtGui/QWheelEvent>
 #include <QtQuick/QQuickWindow>
+#include <QtWebEngineCore/QWebEngineClientHints>
+#include <QtWebEngineCore/QWebEngineCookieStore>
 #include <QtWebEngineCore/QWebEngineScript>
+#include <QtWebEngineCore/qtwebenginecoreglobal.h>
 #include <QtWebEngineQuick/QQuickWebEngineProfile>
 
 namespace sofa {
@@ -44,6 +47,27 @@ bool isRemoteKey(int key)
     default:
         return false;
     }
+}
+
+// Sites see Chrome on Linux with the engine's real major version, in Chrome's reduced format (the same string on
+// every computer), without the "QtWebEngine/…" token some sites refuse. The client hints say the same: their brands
+// leave out "QtWebEngine" too.
+void presentAsChrome(QQuickWebEngineProfile *profile)
+{
+    const QString major = QString::fromLatin1(qWebEngineChromiumVersion()).section(QLatin1Char('.'), 0, 0);
+    const QString full = major + QStringLiteral(".0.0.0");
+    profile->setHttpUserAgent(
+        QStringLiteral("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%1 Safari/537.36")
+            .arg(full));
+    QWebEngineClientHints *hints = profile->clientHints();
+    hints->setPlatform(QStringLiteral("Linux"));
+    hints->setIsMobile(false);
+    hints->setModel(QString());
+    hints->setFullVersion(full);
+    hints->setFullVersionList(QVariantMap{
+        {QStringLiteral("Chromium"), full},
+        {QStringLiteral("Not_A Brand"), QStringLiteral("24.0.0.0")},
+    });
 }
 
 QString objectPath(const QString &appId)
@@ -135,13 +159,25 @@ QObject *Host::newPrivateProfile()
     // A profile without a storage name keeps nothing on disk: cookies, storage and cache live in memory and go
     // with the profile. (Made through the named constructor: since Qt 6.9 the other one is on its way out.)
     auto *profile = new QQuickWebEngineProfile(QString(), this);
-    profile->setUrlRequestInterceptor(m_interceptor);
-    addPageScript(profile);
+    // Private browsing promises that nothing stays: a profile the engine would keep on disk is not used at all.
+    if (!profile->isOffTheRecord()) {
+        qWarning("The engine gave a private profile that keeps data on disk; private browsing is off.");
+        delete profile;
+        return nullptr;
+    }
+    setUpProfile(profile);
     return profile;
 }
 
-void Host::addPageScript(QQuickWebEngineProfile *profile) const
+void Host::setUpProfile(QQuickWebEngineProfile *profile) const
 {
+    profile->setUrlRequestInterceptor(m_interceptor);
+    // Cookies only for the site in the address bar: a frame or a request from another site neither sets nor reads
+    // them.
+    profile->cookieStore()->setCookieFilter(
+        [](const QWebEngineCookieStore::FilterRequest &request) { return !request.thirdParty; });
+    presentAsChrome(profile);
+
     QWebEngineScript script;
     script.setName(QStringLiteral("sofa-press"));
     script.setSourceCode(m_pageScript);

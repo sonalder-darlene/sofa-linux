@@ -122,8 +122,7 @@ bool prepareEngine(QQmlApplicationEngine &engine, const QString &storageName, ru
 
     // Named at construction (Qt 6.9 and newer): a profile renamed or switched to disk afterwards is on its way out.
     auto *profile = new QQuickWebEngineProfile(storageName, &engine);
-    profile->setUrlRequestInterceptor(interceptor);
-    host->addPageScript(profile);
+    host->setUpProfile(profile);
 
     engine.setInitialProperties(QVariantMap{
         {QStringLiteral("profile"), QVariant::fromValue(profile)},

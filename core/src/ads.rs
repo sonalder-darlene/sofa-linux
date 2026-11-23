@@ -2,8 +2,9 @@
 //!
 //! Sofa carries two domain lists of its own (StevenBlack's hosts and HaGeZi's pop-up ad domains, the same two as on
 //! Android, in `data/filters/`). Each line is one domain, and it blocks that domain and every domain under it. The
-//! lists are compiled into one engine on a worker thread when Sofa starts (about a tenth of a second). Until then
-//! nothing is blocked, so starting never waits for them.
+//! lists are compiled into one engine on a worker thread when Sofa starts (about a tenth of a second). Starting
+//! doesn't wait for them, but a request asked about in the meantime does (at most [`READY_WAIT`]), so even the first
+//! pages Sofa opens load without their ads.
 //!
 //! The engine only decides about the parts of a page: images, scripts, frames and the like. Where a page itself may
 //! go is the pop-up rules' job, not this one. On a site where the user switched ad blocking off ([`AdAllowlist`]),
@@ -12,7 +13,8 @@
 use std::fmt;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Condvar, Mutex, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::time::Duration;
 
 use adblock::Engine;
 use adblock::lists::{FilterFormat, FilterSet, ParseOptions};
@@ -52,11 +54,20 @@ pub const BUNDLED: &[BundledList] = &[
     },
 ];
 
+/// How long a request asked about while the lists compile waits for them, at most. The engine asks on its UI thread,
+/// so the window waits as well; usually the lists are in before the first page asks. Past it, Sofa stops waiting and
+/// requests pass until the lists are in (a computer that slow is better off without the wait).
+pub const READY_WAIT: Duration = Duration::from_secs(2);
+
 /// The ad blocker: one engine for every profile (normal and private) and every thread, and the on/off switch.
 pub struct AdBlocker {
     enabled: AtomicBool,
     engine: OnceLock<Engine>,
     allowlist: RwLock<AdAllowlist>,
+    // Whether requests wait for the lists: from [`AdBlocker::loading`] until they are in or the wait ran out.
+    waits: AtomicBool,
+    // Wakes the requests waiting for the lists.
+    compiled: (Mutex<()>, Condvar),
 }
 
 impl fmt::Debug for AdBlocker {
@@ -72,7 +83,13 @@ impl AdBlocker {
     /// An ad blocker with no lists yet, switched on or off.
     #[must_use]
     pub fn new(enabled: bool) -> Self {
-        Self { enabled: AtomicBool::new(enabled), engine: OnceLock::new(), allowlist: RwLock::default() }
+        Self {
+            enabled: AtomicBool::new(enabled),
+            engine: OnceLock::new(),
+            allowlist: RwLock::default(),
+            waits: AtomicBool::new(false),
+            compiled: (Mutex::new(()), Condvar::new()),
+        }
     }
 
     /// Puts `allowlist` in place of the sites switched off so far (Sofa reads its file at start).
@@ -138,6 +155,32 @@ impl AdBlocker {
         self.engine.get().is_some()
     }
 
+    /// The lists are being compiled on another thread: until they are in, a request asked about waits for them
+    /// (at most [`READY_WAIT`], once).
+    pub fn loading(&self) {
+        self.waits.store(true, Ordering::Relaxed);
+    }
+
+    /// The compiled lists; while they are being compiled ([`AdBlocker::loading`]), waits for them.
+    fn engine(&self) -> Option<&Engine> {
+        if let Some(engine) = self.engine.get() {
+            return Some(engine);
+        }
+        if !self.waits.load(Ordering::Relaxed) {
+            return None;
+        }
+        let lock = self.compiled.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let (_lock, wait) = self
+            .compiled
+            .1
+            .wait_timeout_while(lock, READY_WAIT, |()| self.engine.get().is_none())
+            .unwrap_or_else(PoisonError::into_inner);
+        if wait.timed_out() && self.waits.swap(false, Ordering::Relaxed) {
+            eprintln!("sofa-tv-browser: the filter lists are still compiling; requests pass until they are in");
+        }
+        self.engine.get()
+    }
+
     /// Compiles `lists` (domain lists, one domain per line) into the engine. Only the first call counts: the
     /// lists in use don't change while Sofa runs.
     pub fn load<I, S>(&self, lists: I)
@@ -152,6 +195,9 @@ impl AdBlocker {
         }
         // A second call loses the race and drops its engine; the first one stays.
         let _ = self.engine.set(Engine::new_with_filter_set(set));
+        // Under the lock, so a request that just found no engine is already waiting and gets woken.
+        let _lock = self.compiled.0.lock().unwrap_or_else(PoisonError::into_inner);
+        self.compiled.1.notify_all();
     }
 
     /// Compiles the lists built into Sofa.
@@ -173,7 +219,7 @@ impl AdBlocker {
     /// `$popup` or `$document` rules will need a check of their own here.
     #[must_use]
     pub fn lists_host(&self, url: &str) -> bool {
-        let Some(engine) = self.engine.get() else { return false };
+        let Some(engine) = self.engine() else { return false };
         adblock::request::Request::new(url, url, ResourceKind::Other.as_filter_type(), "GET")
             .is_ok_and(|r| engine.check_network_request(&r).should_block())
     }
@@ -185,7 +231,7 @@ impl AdBlocker {
         if request.kind == ResourceKind::Page || !self.is_enabled() {
             return false;
         }
-        let Some(engine) = self.engine.get() else { return false };
+        let Some(engine) = self.engine() else { return false };
         // The engine's own parser reads the address; one it can't read (data:, blob:…) has no host to block.
         let listed =
             adblock::request::Request::new(request.url, request.first_party, request.kind.as_filter_type(), "GET")
@@ -301,6 +347,20 @@ mod tests {
         ads.load(["other.example\n"]);
         assert!(ads.blocks(&request("https://ads.example/a.js", ResourceKind::Script)));
         assert!(!ads.blocks(&request("https://other.example/a.js", ResourceKind::Script)));
+    }
+
+    #[test]
+    fn a_request_made_while_the_lists_compile_waits_for_them() {
+        let ads = std::sync::Arc::new(AdBlocker::new(true));
+        ads.loading();
+        let compiling = std::sync::Arc::clone(&ads);
+        let loader = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            compiling.load(["ads.example\n"]);
+        });
+        assert!(ads.blocks(&request("https://ads.example/a.js", ResourceKind::Script)));
+        assert!(ads.lists_host("https://ads.example/"));
+        loader.join().expect("the loader thread");
     }
 
     #[test]

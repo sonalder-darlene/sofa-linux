@@ -126,7 +126,8 @@ impl Library {
     }
 
     fn with(db: Connection) -> Result<Self> {
-        db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF;")?;
+        // What is deleted is overwritten as well, so a removed visit or bookmark can't be read back from the file.
+        db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF; PRAGMA secure_delete = ON;")?;
         let version: i64 = db.query_one("PRAGMA user_version", &[], |r| r.get(0))?;
         if version < 1 {
             db.execute_batch(
@@ -532,7 +533,7 @@ impl Library {
     pub fn remove_visit(&self, id: i64) -> Result<()> {
         self.forget_most_visited();
         self.db.execute("DELETE FROM history WHERE id = ?1", &[id.into()])?;
-        Ok(())
+        self.erase_log()
     }
 
     /// Removes all of History.
@@ -543,7 +544,26 @@ impl Library {
     pub fn clear_history(&self) -> Result<()> {
         self.forget_most_visited();
         self.db.execute("DELETE FROM history", &[])?;
+        self.erase_log()
+    }
+
+    /// Removes the visits made before `cutoff` (milliseconds since 1970, as [`crate::history_days::cutoff`] gives).
+    ///
+    /// # Errors
+    ///
+    /// A database failure.
+    pub fn prune_history(&self, cutoff: i64) -> Result<()> {
+        self.forget_most_visited();
+        if self.db.execute("DELETE FROM history WHERE visited < ?1", &[cutoff.into()])? > 0 {
+            self.erase_log()?;
+        }
         Ok(())
+    }
+
+    /// Writes what was just deleted into the database file, where secure delete overwrites it, and empties the
+    /// write-ahead log, which holds the old pages until then.
+    fn erase_log(&self) -> Result<()> {
+        Ok(self.db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?)
     }
 
     /// Sites visited at least `min_visits` times in the last 30 days, grouped by host so that many pages of one site
@@ -909,6 +929,47 @@ mod tests {
         let l = Library::open(&path)?;
         assert!(l.is_bookmarked("https://a.example/")?);
         assert_eq!(l.tiles()?.len(), DEFAULT_TILES.len() - 1);
+        drop(l);
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn pruning_removes_only_the_visits_before_the_cutoff() -> Result<()> {
+        let l = lib();
+        l.record_visit("Old", "https://old.example/", NOW - 91 * DAY_MS)?;
+        l.record_visit("Recent", "https://recent.example/", NOW - 89 * DAY_MS)?;
+        l.prune_history(crate::history_days::cutoff(90, NOW).unwrap_or(i64::MIN))?;
+        let left: Vec<String> = l.history(10)?.into_iter().map(|v| v.title).collect();
+        assert_eq!(left, ["Recent"]);
+        l.prune_history(crate::history_days::cutoff(crate::history_days::NEVER, NOW).unwrap_or(i64::MIN))?;
+        assert!(l.history(10)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_removed_visit_is_gone_from_the_files() -> Result<()> {
+        let dir = std::env::temp_dir().join(format!("sofa-lib-erase-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a test folder");
+        let path = dir.join("library.db");
+        let marker = "https://erase-marker-5f2c.example/";
+        let found = |dir: &Path| {
+            std::fs::read_dir(dir).expect("the test folder").flatten().any(|f| {
+                let bytes = std::fs::read(f.path()).unwrap_or_default();
+                bytes.windows(marker.len()).any(|w| w == marker.as_bytes())
+            })
+        };
+        let l = Library::open(&path)?;
+        l.record_visit("Kept", "https://kept.example/", NOW)?;
+        l.record_visit("Marker", marker, NOW)?;
+        l.db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        assert!(found(&dir), "the marker should be in the file before it is removed");
+        let id = l.history(10)?.into_iter().find(|v| v.url == marker).map(|v| v.id).expect("the marker visit");
+        l.remove_visit(id)?;
+        assert!(!found(&dir), "a removed visit left its address in the files");
+        l.record_visit("Marker", marker, NOW)?;
+        l.clear_history()?;
+        assert!(!found(&dir), "a cleared history left an address in the files");
         drop(l);
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())

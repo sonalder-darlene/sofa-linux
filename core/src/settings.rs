@@ -9,6 +9,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::address;
+use crate::history_days;
 use crate::start::{self, Choice};
 
 /// The keys Settings keeps, with their defaults. The names match Sofa on Android, so a settings backup reads the same.
@@ -18,6 +19,8 @@ pub const SETTINGS: &[(&str, &str)] = &[
     ("open_at_start", "home"),
     ("start_page", ""),
     ("adblock", "true"),
+    // Days, or -1 (always) or 0 (never): crate::history_days.
+    ("history_days", "90"),
 ];
 
 /// The keys the session file keeps: browsing state, never part of a settings backup.
@@ -104,14 +107,26 @@ impl KeyFile {
     }
 }
 
-/// Writes `bytes` to `path` through a file beside it and a rename, making the folder first.
+/// Makes the folder `dir` (and the folders above it that are missing) readable by the user alone, as Sofa's own
+/// folders are: they hold what the user browsed.
+///
+/// # Errors
+///
+/// A folder can't be made.
+pub fn create_private_dir(dir: &Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)
+}
+
+/// Writes `bytes` to `path` through a file beside it and a rename, making the folder first (see
+/// [`create_private_dir`]).
 ///
 /// # Errors
 ///
 /// The folder or the file can't be written.
 pub fn write_replacing(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        create_private_dir(dir)?;
     }
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".new");
@@ -126,6 +141,7 @@ fn check(key: &str, value: &str) -> Option<String> {
     match key {
         "search_engine" => (v.is_empty() || address::engine(v).is_some()).then(|| v.to_owned()),
         "adblock" => matches!(v, "true" | "false").then(|| v.to_owned()),
+        "history_days" => v.parse::<i32>().ok().filter(|d| history_days::CHOICES.contains(d)).map(|d| d.to_string()),
         "open_at_start" => Some(Choice::from_id(v).id().to_owned()),
         "start_page" | "last_page" => {
             if v.is_empty() {
@@ -196,6 +212,11 @@ mod tests {
         assert!(s.set("adblock", "false")?);
         assert!(!s.set("adblock", "maybe")?);
         assert_eq!(s.get("adblock"), "false");
+        assert_eq!(history_days::from_stored(s.get("history_days")), history_days::DEFAULT);
+        assert_eq!(s.get("history_days"), history_days::DEFAULT.to_string());
+        assert!(s.set("history_days", "-1")?);
+        assert!(!s.set("history_days", "12")?);
+        assert_eq!(s.get("history_days"), "-1");
         let mut session = KeyFile::load(None, SESSION);
         assert!(session.set("engine_warned_version", "132.0.6834.210")?);
         assert!(!session.set("engine_warned_version", "132.0; rm")?);
@@ -218,6 +239,18 @@ mod tests {
         assert_eq!(back.get("tabs"), "0\nhttps://a.example/\nhttps://b.example/\\x");
         assert_eq!(back.get("last_page"), "https://a.example/");
         let _ = std::fs::remove_dir_all(path.parent().unwrap_or(&path));
+        Ok(())
+    }
+
+    #[test]
+    fn folders_are_made_for_the_user_alone() -> io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp("private");
+        let mut s = KeyFile::load(Some(path.clone()), SETTINGS);
+        s.set("open_at_start", "last")?;
+        let dir = path.parent().unwrap_or(&path);
+        assert_eq!(std::fs::metadata(dir)?.permissions().mode() & 0o777, 0o700);
+        let _ = std::fs::remove_dir_all(dir);
         Ok(())
     }
 

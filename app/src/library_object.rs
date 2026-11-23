@@ -111,6 +111,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "clearHistory"]
         fn clear_history(&self);
+        /// Settings → Keep history for changed to `days` (as `history_days` stores it): older visits go at once.
+        #[qinvokable]
+        #[cxx_name = "keepHistoryFor"]
+        fn keep_history_for(&self, days: i32);
         /// `[{id, title, url}]`: sites visited at least three times in the last 30 days.
         #[qinvokable]
         #[cxx_name = "mostVisited"]
@@ -121,6 +125,7 @@ pub mod qobject {
     }
 }
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -131,7 +136,9 @@ use cxx_qt_lib::QString;
 use serde_json::{Value, json};
 use sofa_core::bookmark_file;
 use sofa_core::folders::{self, FolderId, FolderTree};
+use sofa_core::history_days;
 use sofa_core::library::{self, Library, Site};
+use sofa_core::settings::{KeyFile, SETTINGS};
 use sofa_core::sites;
 
 use crate::paths;
@@ -141,20 +148,38 @@ use crate::paths;
 #[derive(Debug)]
 pub struct LibraryRust {
     db: Option<Library>,
+    // Settings → Keep history for (sofa_core::history_days).
+    history_days: Cell<i32>,
 }
 
 impl Default for LibraryRust {
     fn default() -> Self {
         let opened = paths::data_dir().ok_or_else(|| "no home folder".to_owned()).and_then(|dir| {
-            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            sofa_core::settings::create_private_dir(&dir).map_err(|e| e.to_string())?;
             Library::open(&dir.join("library.db")).map_err(|e| e.to_string())
         });
+        // Read once here; Settings tells about a change through keep_history_for().
+        let settings = KeyFile::load(paths::config_dir().map(|d| d.join("settings.conf")), SETTINGS);
+        let days = history_days::from_stored(settings.get("history_days"));
         match opened {
-            Ok(db) => Self { db: Some(db) },
+            Ok(db) => {
+                let library = Self { db: Some(db), history_days: Cell::new(days) };
+                library.prune();
+                library
+            }
             Err(e) => {
                 eprintln!("sofa-tv-browser: bookmarks and history are off for this run: {e}");
-                Self { db: None }
+                Self { db: None, history_days: Cell::new(days) }
             }
+        }
+    }
+}
+
+impl LibraryRust {
+    /// Removes the visits Keep history for no longer keeps.
+    fn prune(&self) {
+        if let (Some(db), Some(cutoff)) = (&self.db, history_days::cutoff(self.history_days.get(), now())) {
+            or_log(db.prune_history(cutoff), ());
         }
     }
 }
@@ -486,6 +511,9 @@ impl qobject::Library {
     }
 
     fn record_visit(&self, title: &QString, url: &QString) {
+        if !history_days::records(self.history_days.get()) {
+            return;
+        }
         let url = String::from(url);
         if let Some(db) = self.db.as_ref().filter(|_| sites::is_web_url(&url)) {
             or_log(db.record_visit(&String::from(title), &url, now()), ());
@@ -509,6 +537,11 @@ impl qobject::Library {
         if let Some(db) = &self.db {
             or_log(db.clear_history(), ());
         }
+    }
+
+    fn keep_history_for(&self, days: i32) {
+        self.history_days.set(history_days::from_stored(&days.to_string()));
+        self.prune();
     }
 
     fn most_visited(&self, limit: i32) -> QString {
